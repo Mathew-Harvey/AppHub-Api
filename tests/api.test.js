@@ -1,0 +1,704 @@
+const request = require('supertest');
+const path = require('path');
+const fs = require('fs');
+const app = require('../index');
+const { migrate, teardown, pool } = require('./setup');
+
+// Cookie jar — stores auth cookies between requests
+let adminCookie;
+let memberCookie;
+let adminUser;
+let memberUser;
+let workspaceId;
+
+beforeAll(async () => {
+  await migrate();
+
+  // Ensure test upload directory exists
+  const uploadDir = process.env.UPLOAD_DIR || './uploads';
+  fs.mkdirSync(uploadDir, { recursive: true });
+});
+
+afterAll(async () => {
+  await teardown();
+});
+
+// ─── Health ─────────────────────────────────────────────────────────────────
+
+describe('GET /api/health', () => {
+  it('returns ok status', async () => {
+    const res = await request(app).get('/api/health');
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('ok');
+    expect(res.body.timestamp).toBeDefined();
+  });
+});
+
+// ─── Auth: Register ─────────────────────────────────────────────────────────
+
+describe('POST /api/auth/register', () => {
+  it('rejects missing fields', async () => {
+    const res = await request(app)
+      .post('/api/auth/register')
+      .send({ email: 'test@test.com' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/required/i);
+  });
+
+  it('rejects short password', async () => {
+    const res = await request(app)
+      .post('/api/auth/register')
+      .send({ email: 'a@b.com', password: 'short', displayName: 'Test', workspaceName: 'TestWs' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/8 characters/);
+  });
+
+  it('rejects register without workspace or invite', async () => {
+    const res = await request(app)
+      .post('/api/auth/register')
+      .send({ email: 'a@b.com', password: 'password123', displayName: 'Test' });
+    expect(res.status).toBe(400);
+  });
+
+  it('creates workspace and admin user', async () => {
+    const res = await request(app)
+      .post('/api/auth/register')
+      .send({
+        email: 'admin@test.com',
+        password: 'password123',
+        displayName: 'Admin User',
+        workspaceName: 'Test Workspace'
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.user.email).toBe('admin@test.com');
+    expect(res.body.user.displayName).toBe('Admin User');
+    expect(res.body.user.role).toBe('admin');
+    expect(res.body.user.workspace).toBeDefined();
+    expect(res.body.user.workspace.name).toBe('Test Workspace');
+    expect(res.body.user.workspace.primaryColor).toBe('#1a1a2e');
+
+    adminCookie = res.headers['set-cookie'];
+    adminUser = res.body.user;
+    workspaceId = res.body.user.workspaceId;
+  });
+
+  it('rejects duplicate workspace slug', async () => {
+    const res = await request(app)
+      .post('/api/auth/register')
+      .send({
+        email: 'other@test.com',
+        password: 'password123',
+        displayName: 'Other',
+        workspaceName: 'Test Workspace'
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/similar name/);
+  });
+});
+
+// ─── Auth: Login ────────────────────────────────────────────────────────────
+
+describe('POST /api/auth/login', () => {
+  it('rejects missing fields', async () => {
+    const res = await request(app)
+      .post('/api/auth/login')
+      .send({ email: 'admin@test.com' });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects wrong password', async () => {
+    const res = await request(app)
+      .post('/api/auth/login')
+      .send({ email: 'admin@test.com', password: 'wrongpassword' });
+    expect(res.status).toBe(401);
+  });
+
+  it('logs in successfully with workspace data', async () => {
+    const res = await request(app)
+      .post('/api/auth/login')
+      .send({ email: 'admin@test.com', password: 'password123' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.user.email).toBe('admin@test.com');
+    expect(res.body.user.workspace).toBeDefined();
+    expect(res.body.user.workspace.name).toBe('Test Workspace');
+
+    // Refresh admin cookie
+    adminCookie = res.headers['set-cookie'];
+  });
+
+  it('rejects non-existent user', async () => {
+    const res = await request(app)
+      .post('/api/auth/login')
+      .send({ email: 'nobody@test.com', password: 'password123' });
+    expect(res.status).toBe(401);
+  });
+});
+
+// ─── Auth: Me ───────────────────────────────────────────────────────────────
+
+describe('GET /api/auth/me', () => {
+  it('returns 401 without cookie', async () => {
+    const res = await request(app).get('/api/auth/me');
+    expect(res.status).toBe(401);
+  });
+
+  it('returns user profile with workspace', async () => {
+    const res = await request(app)
+      .get('/api/auth/me')
+      .set('Cookie', adminCookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.user.email).toBe('admin@test.com');
+    expect(res.body.user.workspace.primaryColor).toBe('#1a1a2e');
+  });
+});
+
+// ─── Auth: Logout ───────────────────────────────────────────────────────────
+
+describe('POST /api/auth/logout', () => {
+  it('clears cookie', async () => {
+    const res = await request(app)
+      .post('/api/auth/logout')
+      .set('Cookie', adminCookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+
+    // Re-login for subsequent tests
+    const login = await request(app)
+      .post('/api/auth/login')
+      .send({ email: 'admin@test.com', password: 'password123' });
+    adminCookie = login.headers['set-cookie'];
+  });
+});
+
+// ─── Workspace ──────────────────────────────────────────────────────────────
+
+describe('GET /api/workspace', () => {
+  it('returns workspace details', async () => {
+    const res = await request(app)
+      .get('/api/workspace')
+      .set('Cookie', adminCookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.workspace.name).toBe('Test Workspace');
+    expect(res.body.workspace.primaryColor).toBe('#1a1a2e');
+  });
+});
+
+describe('PUT /api/workspace', () => {
+  it('updates workspace branding', async () => {
+    const res = await request(app)
+      .put('/api/workspace')
+      .set('Cookie', adminCookie)
+      .send({ primaryColor: '#ff0000', accentColor: '#00ff00' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.workspace.primaryColor).toBe('#ff0000');
+    expect(res.body.workspace.accentColor).toBe('#00ff00');
+  });
+});
+
+// ─── Workspace: Members ─────────────────────────────────────────────────────
+
+describe('GET /api/workspace/members', () => {
+  it('lists workspace members', async () => {
+    const res = await request(app)
+      .get('/api/workspace/members')
+      .set('Cookie', adminCookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.members).toHaveLength(1);
+    expect(res.body.members[0].email).toBe('admin@test.com');
+    expect(res.body.members[0].displayName).toBe('Admin User');
+  });
+});
+
+// ─── Workspace: Invitations ─────────────────────────────────────────────────
+
+let invitationId;
+
+describe('POST /api/workspace/invite', () => {
+  it('rejects missing email', async () => {
+    const res = await request(app)
+      .post('/api/workspace/invite')
+      .set('Cookie', adminCookie)
+      .send({});
+    expect(res.status).toBe(400);
+  });
+
+  it('creates invitation', async () => {
+    const res = await request(app)
+      .post('/api/workspace/invite')
+      .set('Cookie', adminCookie)
+      .send({ email: 'member@test.com' });
+
+    expect(res.status).toBe(201);
+    expect(res.body.invitation.email).toBe('member@test.com');
+    expect(res.body.invitation.inviteLink).toContain('/register?invite=');
+    invitationId = res.body.invitation.id;
+  });
+
+  it('rejects duplicate invitation', async () => {
+    const res = await request(app)
+      .post('/api/workspace/invite')
+      .set('Cookie', adminCookie)
+      .send({ email: 'member@test.com' });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('GET /api/workspace/invitations', () => {
+  it('lists invitations', async () => {
+    const res = await request(app)
+      .get('/api/workspace/invitations')
+      .set('Cookie', adminCookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.invitations.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ─── Auth: Register via invite ──────────────────────────────────────────────
+
+describe('Register via invitation', () => {
+  it('registers member with invite code', async () => {
+    const res = await request(app)
+      .post('/api/auth/register')
+      .send({
+        email: 'member@test.com',
+        password: 'password123',
+        displayName: 'Member User',
+        inviteCode: invitationId
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.user.role).toBe('member');
+    expect(res.body.user.workspace.name).toBe('Test Workspace');
+
+    memberCookie = res.headers['set-cookie'];
+    memberUser = res.body.user;
+  });
+
+  it('rejects already-used invite', async () => {
+    const res = await request(app)
+      .post('/api/auth/register')
+      .send({
+        email: 'another@test.com',
+        password: 'password123',
+        displayName: 'Another',
+        inviteCode: invitationId
+      });
+    expect(res.status).toBe(400);
+  });
+});
+
+// ─── Workspace: Role change ─────────────────────────────────────────────────
+
+describe('PUT /api/workspace/members/:id/role', () => {
+  it('rejects invalid role', async () => {
+    const res = await request(app)
+      .put(`/api/workspace/members/${memberUser.id}/role`)
+      .set('Cookie', adminCookie)
+      .send({ role: 'superadmin' });
+    expect(res.status).toBe(400);
+  });
+
+  it('changes member role', async () => {
+    const res = await request(app)
+      .put(`/api/workspace/members/${memberUser.id}/role`)
+      .set('Cookie', adminCookie)
+      .send({ role: 'admin' });
+    expect(res.status).toBe(200);
+
+    // Change back to member for subsequent tests
+    await request(app)
+      .put(`/api/workspace/members/${memberUser.id}/role`)
+      .set('Cookie', adminCookie)
+      .send({ role: 'member' });
+  });
+
+  it('rejects non-admin caller', async () => {
+    const res = await request(app)
+      .put(`/api/workspace/members/${adminUser.id}/role`)
+      .set('Cookie', memberCookie)
+      .send({ role: 'member' });
+    expect(res.status).toBe(403);
+  });
+});
+
+// ─── Apps: Check ────────────────────────────────────────────────────────────
+
+describe('POST /api/apps/check', () => {
+  it('rejects missing filename', async () => {
+    const res = await request(app)
+      .post('/api/apps/check')
+      .set('Cookie', adminCookie)
+      .send({});
+    expect(res.status).toBe(400);
+  });
+
+  it('returns supported for .html', async () => {
+    const res = await request(app)
+      .post('/api/apps/check')
+      .set('Cookie', adminCookie)
+      .send({ filename: 'my-app.html' });
+    expect(res.status).toBe(200);
+    expect(res.body.supported).toBe(true);
+  });
+
+  it('returns supported for .htm', async () => {
+    const res = await request(app)
+      .post('/api/apps/check')
+      .set('Cookie', adminCookie)
+      .send({ filename: 'app.htm' });
+    expect(res.body.supported).toBe(true);
+  });
+
+  it('returns unsupported with conversion prompt for .jsx', async () => {
+    const res = await request(app)
+      .post('/api/apps/check')
+      .set('Cookie', adminCookie)
+      .send({ filename: 'component.jsx' });
+    expect(res.body.supported).toBe(false);
+    expect(res.body.detected).toBe('React JSX Component');
+    expect(res.body.conversionPrompt).toBeDefined();
+  });
+
+  it('handles unknown extensions', async () => {
+    const res = await request(app)
+      .post('/api/apps/check')
+      .set('Cookie', adminCookie)
+      .send({ filename: 'data.xyz' });
+    expect(res.body.supported).toBe(false);
+    expect(res.body.detected).toContain('xyz');
+  });
+});
+
+// ─── Apps: Upload ───────────────────────────────────────────────────────────
+
+let appId;
+const testHtml = '<html><head><title>Test</title></head><body><h1>Hello</h1></body></html>';
+
+describe('POST /api/apps/upload', () => {
+  it('rejects unauthenticated', async () => {
+    const res = await request(app)
+      .post('/api/apps/upload')
+      .field('name', 'Test App');
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects missing file', async () => {
+    const res = await request(app)
+      .post('/api/apps/upload')
+      .set('Cookie', adminCookie)
+      .field('name', 'Test App');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/no file/i);
+  });
+
+  it('rejects missing name', async () => {
+    // Create temp test file
+    const tmpFile = path.join(__dirname, 'test-app.html');
+    fs.writeFileSync(tmpFile, testHtml);
+
+    const res = await request(app)
+      .post('/api/apps/upload')
+      .set('Cookie', adminCookie)
+      .attach('appFile', tmpFile);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/name/i);
+
+    fs.unlinkSync(tmpFile);
+  });
+
+  it('uploads an HTML app successfully', async () => {
+    const tmpFile = path.join(__dirname, 'test-app.html');
+    fs.writeFileSync(tmpFile, testHtml);
+
+    const res = await request(app)
+      .post('/api/apps/upload')
+      .set('Cookie', adminCookie)
+      .attach('appFile', tmpFile)
+      .field('name', 'My Test App')
+      .field('description', 'A test application')
+      .field('icon', '🚀')
+      .field('visibility', 'team');
+
+    expect(res.status).toBe(201);
+    expect(res.body.app.name).toBe('My Test App');
+    expect(res.body.app.description).toBe('A test application');
+    expect(res.body.app.icon).toBe('🚀');
+    expect(res.body.app.visibility).toBe('team');
+    expect(res.body.app.uploadedBy).toBe('Admin User');
+    expect(res.body.app.uploadedByEmail).toBe('admin@test.com');
+    expect(res.body.validation).toBeDefined();
+
+    appId = res.body.app.id;
+    fs.unlinkSync(tmpFile);
+  });
+});
+
+// ─── Apps: List ─────────────────────────────────────────────────────────────
+
+describe('GET /api/apps', () => {
+  it('lists apps for workspace', async () => {
+    const res = await request(app)
+      .get('/api/apps')
+      .set('Cookie', adminCookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.apps.length).toBeGreaterThanOrEqual(1);
+    expect(res.body.apps[0].name).toBe('My Test App');
+  });
+
+  it('member can see team-visible apps', async () => {
+    const res = await request(app)
+      .get('/api/apps')
+      .set('Cookie', memberCookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.apps.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ─── Apps: Get by ID ────────────────────────────────────────────────────────
+
+describe('GET /api/apps/:id', () => {
+  it('returns app details', async () => {
+    const res = await request(app)
+      .get(`/api/apps/${appId}`)
+      .set('Cookie', adminCookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.app.name).toBe('My Test App');
+    expect(res.body.app.uploadedByEmail).toBe('admin@test.com');
+  });
+
+  it('returns 404 for non-existent app', async () => {
+    const res = await request(app)
+      .get('/api/apps/00000000-0000-0000-0000-000000000000')
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(404);
+  });
+
+  it('rejects invalid UUID', async () => {
+    const res = await request(app)
+      .get('/api/apps/not-a-uuid')
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/invalid id/i);
+  });
+});
+
+// ─── Apps: Update ───────────────────────────────────────────────────────────
+
+describe('PUT /api/apps/:id', () => {
+  it('updates app metadata', async () => {
+    const res = await request(app)
+      .put(`/api/apps/${appId}`)
+      .set('Cookie', adminCookie)
+      .send({ name: 'Updated App', description: 'Updated description' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.app.name).toBe('Updated App');
+    expect(res.body.app.description).toBe('Updated description');
+  });
+
+  it('rejects non-owner non-admin', async () => {
+    const res = await request(app)
+      .put(`/api/apps/${appId}`)
+      .set('Cookie', memberCookie)
+      .send({ name: 'Hacked' });
+    expect(res.status).toBe(403);
+  });
+});
+
+// ─── Apps: Visibility (private) ─────────────────────────────────────────────
+
+let privateAppId;
+
+describe('App visibility', () => {
+  it('admin uploads a private app', async () => {
+    const tmpFile = path.join(__dirname, 'private-app.html');
+    fs.writeFileSync(tmpFile, testHtml);
+
+    const res = await request(app)
+      .post('/api/apps/upload')
+      .set('Cookie', adminCookie)
+      .attach('appFile', tmpFile)
+      .field('name', 'Private App')
+      .field('visibility', 'private');
+
+    expect(res.status).toBe(201);
+    privateAppId = res.body.app.id;
+    fs.unlinkSync(tmpFile);
+  });
+
+  it('member cannot see private app', async () => {
+    const res = await request(app)
+      .get(`/api/apps/${privateAppId}`)
+      .set('Cookie', memberCookie);
+    expect(res.status).toBe(403);
+  });
+
+  it('member list does not include private app', async () => {
+    const res = await request(app)
+      .get('/api/apps')
+      .set('Cookie', memberCookie);
+
+    const ids = res.body.apps.map(a => a.id);
+    expect(ids).not.toContain(privateAppId);
+  });
+});
+
+// ─── Apps: Delete ───────────────────────────────────────────────────────────
+
+describe('DELETE /api/apps/:id', () => {
+  it('rejects non-owner non-admin', async () => {
+    const res = await request(app)
+      .delete(`/api/apps/${appId}`)
+      .set('Cookie', memberCookie);
+    expect(res.status).toBe(403);
+  });
+
+  it('owner can delete', async () => {
+    const res = await request(app)
+      .delete(`/api/apps/${appId}`)
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+  });
+
+  it('deleted app returns 404', async () => {
+    const res = await request(app)
+      .get(`/api/apps/${appId}`)
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(404);
+  });
+
+  it('cannot re-delete', async () => {
+    const res = await request(app)
+      .delete(`/api/apps/${appId}`)
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(404);
+  });
+});
+
+// ─── Workspace: Revoke invitation ───────────────────────────────────────────
+
+describe('DELETE /api/workspace/invite/:id', () => {
+  let newInviteId;
+
+  it('creates a new invitation to revoke', async () => {
+    const res = await request(app)
+      .post('/api/workspace/invite')
+      .set('Cookie', adminCookie)
+      .send({ email: 'revoke-me@test.com' });
+    expect(res.status).toBe(201);
+    newInviteId = res.body.invitation.id;
+  });
+
+  it('revokes invitation', async () => {
+    const res = await request(app)
+      .delete(`/api/workspace/invite/${newInviteId}`)
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+  });
+
+  it('returns 404 for already revoked', async () => {
+    const res = await request(app)
+      .delete(`/api/workspace/invite/${newInviteId}`)
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(404);
+  });
+});
+
+// ─── Workspace: Remove member ───────────────────────────────────────────────
+
+describe('DELETE /api/workspace/members/:id', () => {
+  it('admin cannot remove self', async () => {
+    const res = await request(app)
+      .delete(`/api/workspace/members/${adminUser.id}`)
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/yourself/);
+  });
+
+  it('member cannot remove others', async () => {
+    const res = await request(app)
+      .delete(`/api/workspace/members/${adminUser.id}`)
+      .set('Cookie', memberCookie);
+    expect(res.status).toBe(403);
+  });
+
+  it('admin can deactivate member', async () => {
+    const res = await request(app)
+      .delete(`/api/workspace/members/${memberUser.id}`)
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(200);
+  });
+
+  it('deactivated member cannot log in', async () => {
+    const res = await request(app)
+      .post('/api/auth/login')
+      .send({ email: 'member@test.com', password: 'password123' });
+    expect(res.status).toBe(401);
+  });
+});
+
+// ─── Sandbox ────────────────────────────────────────────────────────────────
+
+describe('GET /sandbox/:appId', () => {
+  let sandboxAppId;
+
+  beforeAll(async () => {
+    // Upload an app for sandbox testing
+    const tmpFile = path.join(__dirname, 'sandbox-test.html');
+    fs.writeFileSync(tmpFile, '<html><body><h1>Sandbox Test</h1></body></html>');
+
+    const res = await request(app)
+      .post('/api/apps/upload')
+      .set('Cookie', adminCookie)
+      .attach('appFile', tmpFile)
+      .field('name', 'Sandbox App');
+
+    sandboxAppId = res.body.app.id;
+    fs.unlinkSync(tmpFile);
+  });
+
+  it('returns 401 without auth', async () => {
+    const res = await request(app).get(`/sandbox/${sandboxAppId}`);
+    expect(res.status).toBe(401);
+  });
+
+  it('serves HTML content with security headers', async () => {
+    const res = await request(app)
+      .get(`/sandbox/${sandboxAppId}`)
+      .set('Cookie', adminCookie);
+
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('Sandbox Test');
+    expect(res.headers['content-type']).toContain('text/html');
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(res.headers['content-security-policy']).toBeDefined();
+  });
+
+  it('returns 404 for non-existent app', async () => {
+    const res = await request(app)
+      .get('/sandbox/00000000-0000-0000-0000-000000000000')
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(404);
+  });
+
+  it('rejects invalid UUID', async () => {
+    const res = await request(app)
+      .get('/sandbox/not-valid')
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(400);
+  });
+});

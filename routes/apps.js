@@ -1,53 +1,68 @@
 const express = require('express');
 const multer = require('multer');
+const rateLimit = require('express-rate-limit');
 const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../config/db');
-const { auth } = require('../middleware/auth');
+const { auth, validateId } = require('../middleware/auth');
 const { detectFileType, validateHtmlFile } = require('../services/fileDetection');
 
 const router = express.Router();
 
-// Configure multer for file uploads
+const uploadLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 50,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Upload limit reached, please try again later' }
+});
+
+// Multer config — files stored per workspace
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
+  destination(req, file, cb) {
     const uploadDir = process.env.UPLOAD_DIR || './uploads';
     const workspaceDir = path.join(uploadDir, req.user.workspaceId);
-    
-    if (!fs.existsSync(workspaceDir)) {
-      fs.mkdirSync(workspaceDir, { recursive: true });
-    }
+    fs.mkdirSync(workspaceDir, { recursive: true });
     cb(null, workspaceDir);
   },
-  filename: (req, file, cb) => {
-    const appId = uuidv4();
-    const ext = path.extname(file.originalname);
-    cb(null, `${appId}${ext}`);
+  filename(req, file, cb) {
+    cb(null, `${uuidv4()}${path.extname(file.originalname)}`);
   }
 });
 
 const upload = multer({
   storage,
-  limits: {
-    fileSize: parseInt(process.env.MAX_FILE_SIZE) || 5 * 1024 * 1024 // 5MB default
-  }
+  limits: { fileSize: parseInt(process.env.MAX_FILE_SIZE) || 5 * 1024 * 1024 }
 });
 
-// POST /api/apps/check - Check file type before upload
+function formatApp(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    icon: row.icon,
+    visibility: row.visibility,
+    originalFilename: row.original_filename,
+    fileSize: row.file_size,
+    uploadedBy: row.uploaded_by_name || null,
+    uploadedByEmail: row.uploaded_by_email || null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+// POST /api/apps/check — validate file type before upload
 router.post('/check', auth, (req, res) => {
   const { filename } = req.body;
-  
   if (!filename) {
     return res.status(400).json({ error: 'Filename is required' });
   }
-
-  const result = detectFileType(filename);
-  res.json(result);
+  res.json(detectFileType(filename));
 });
 
-// POST /api/apps/upload - Upload an HTML app
-router.post('/upload', auth, upload.single('appFile'), async (req, res) => {
+// POST /api/apps/upload — upload an HTML app
+router.post('/upload', auth, uploadLimiter, upload.single('appFile'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -55,30 +70,22 @@ router.post('/upload', auth, upload.single('appFile'), async (req, res) => {
 
     const { name, description, icon, visibility, sharedWith } = req.body;
 
-    if (!name) {
-      // Clean up uploaded file
+    if (!name || !name.trim()) {
       fs.unlinkSync(req.file.path);
       return res.status(400).json({ error: 'App name is required' });
     }
 
-    // Check file type
     const fileCheck = detectFileType(req.file.originalname);
-    
     if (!fileCheck.supported) {
-      // Remove the uploaded file
       fs.unlinkSync(req.file.path);
       return res.status(400).json({
         error: 'Unsupported file type',
         detected: fileCheck.detected,
-        conversionPrompt: fileCheck.conversionPrompt,
-        message: `This looks like a ${fileCheck.detected}. Copy the prompt below and paste it into your AI tool (Claude, ChatGPT, etc.) along with your code to convert it to a single HTML file.`
+        conversionPrompt: fileCheck.conversionPrompt
       });
     }
 
-    // Validate HTML content
     const validation = validateHtmlFile(req.file.path);
-
-    // Store relative path
     const relativePath = path.relative(process.env.UPLOAD_DIR || './uploads', req.file.path);
 
     const client = await pool.connect();
@@ -92,8 +99,8 @@ router.post('/upload', auth, upload.single('appFile'), async (req, res) => {
         [
           req.user.workspaceId,
           req.user.id,
-          name,
-          description || null,
+          name.trim(),
+          description?.trim() || null,
           icon || '📱',
           relativePath,
           req.file.originalname,
@@ -104,7 +111,6 @@ router.post('/upload', auth, upload.single('appFile'), async (req, res) => {
 
       const app = result.rows[0];
 
-      // Handle specific user shares
       if (visibility === 'specific' && sharedWith) {
         const userIds = JSON.parse(sharedWith);
         for (const userId of userIds) {
@@ -117,21 +123,19 @@ router.post('/upload', auth, upload.single('appFile'), async (req, res) => {
 
       await client.query('COMMIT');
 
-      res.status(201).json({
-        app: {
-          id: app.id,
-          name: app.name,
-          description: app.description,
-          icon: app.icon,
-          visibility: app.visibility,
-          originalFilename: app.original_filename,
-          fileSize: app.file_size,
-          createdAt: app.created_at
-        },
-        validation
-      });
+      // Fetch with uploader info for consistent response shape
+      const full = await pool.query(
+        `SELECT a.*, u.display_name AS uploaded_by_name, u.email AS uploaded_by_email
+         FROM apps a LEFT JOIN users u ON a.uploaded_by = u.id
+         WHERE a.id = $1`,
+        [app.id]
+      );
+
+      res.status(201).json({ app: formatApp(full.rows[0]), validation });
     } catch (err) {
       await client.query('ROLLBACK');
+      // Clean up orphaned file on DB failure
+      try { fs.unlinkSync(req.file.path); } catch {}
       throw err;
     } finally {
       client.release();
@@ -142,13 +146,13 @@ router.post('/upload', auth, upload.single('appFile'), async (req, res) => {
   }
 });
 
-// GET /api/apps - List all visible apps for current user
+// GET /api/apps — list all visible apps for current user
 router.get('/', auth, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT DISTINCT a.id, a.name, a.description, a.icon, a.visibility, 
+      `SELECT DISTINCT a.id, a.name, a.description, a.icon, a.visibility,
               a.original_filename, a.file_size, a.created_at, a.updated_at,
-              u.display_name as uploaded_by_name, u.email as uploaded_by_email
+              u.display_name AS uploaded_by_name, u.email AS uploaded_by_email
        FROM apps a
        LEFT JOIN users u ON a.uploaded_by = u.id
        LEFT JOIN app_shares s ON a.id = s.app_id AND s.user_id = $2
@@ -171,11 +175,11 @@ router.get('/', auth, async (req, res) => {
   }
 });
 
-// GET /api/apps/:id - Get single app details
-router.get('/:id', auth, async (req, res) => {
+// GET /api/apps/:id — get single app details
+router.get('/:id', auth, validateId, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT a.*, u.display_name as uploaded_by_name
+      `SELECT a.*, u.display_name AS uploaded_by_name, u.email AS uploaded_by_email
        FROM apps a
        LEFT JOIN users u ON a.uploaded_by = u.id
        WHERE a.id = $1 AND a.workspace_id = $2 AND a.is_active = true`,
@@ -188,27 +192,25 @@ router.get('/:id', auth, async (req, res) => {
 
     const app = result.rows[0];
 
-    // Check visibility access
     if (app.visibility === 'private' && app.uploaded_by !== req.user.id) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    if (app.visibility === 'specific') {
+    if (app.visibility === 'specific' && app.uploaded_by !== req.user.id) {
       const shareCheck = await pool.query(
         'SELECT 1 FROM app_shares WHERE app_id = $1 AND user_id = $2',
         [app.id, req.user.id]
       );
-      if (shareCheck.rows.length === 0 && app.uploaded_by !== req.user.id) {
+      if (shareCheck.rows.length === 0) {
         return res.status(403).json({ error: 'Access denied' });
       }
     }
 
-    // Get shared users if specific
     let sharedWith = [];
     if (app.visibility === 'specific') {
       const shares = await pool.query(
-        `SELECT u.id, u.display_name, u.email 
-         FROM app_shares s JOIN users u ON s.user_id = u.id 
+        `SELECT u.id, u.display_name, u.email
+         FROM app_shares s JOIN users u ON s.user_id = u.id
          WHERE s.app_id = $1`,
         [app.id]
       );
@@ -222,21 +224,18 @@ router.get('/:id', auth, async (req, res) => {
   }
 });
 
-// PUT /api/apps/:id - Update app metadata
-router.put('/:id', auth, async (req, res) => {
+// PUT /api/apps/:id — update app metadata
+router.put('/:id', auth, validateId, async (req, res) => {
   const { name, description, icon, visibility, sharedWith } = req.body;
 
   try {
-    // Check ownership or admin
     const existing = await pool.query(
       'SELECT * FROM apps WHERE id = $1 AND workspace_id = $2 AND is_active = true',
       [req.params.id, req.user.workspaceId]
     );
-
     if (existing.rows.length === 0) {
       return res.status(404).json({ error: 'App not found' });
     }
-
     if (existing.rows[0].uploaded_by !== req.user.id && req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Only the uploader or admin can edit this app' });
     }
@@ -245,19 +244,17 @@ router.put('/:id', auth, async (req, res) => {
     try {
       await client.query('BEGIN');
 
-      const result = await client.query(
-        `UPDATE apps SET 
+      await client.query(
+        `UPDATE apps SET
           name = COALESCE($1, name),
           description = COALESCE($2, description),
           icon = COALESCE($3, icon),
           visibility = COALESCE($4, visibility),
           updated_at = NOW()
-         WHERE id = $5
-         RETURNING *`,
-        [name, description, icon, visibility, req.params.id]
+         WHERE id = $5`,
+        [name?.trim() || null, description?.trim(), icon, visibility, req.params.id]
       );
 
-      // Update shares if visibility is specific
       if (visibility === 'specific' && sharedWith) {
         await client.query('DELETE FROM app_shares WHERE app_id = $1', [req.params.id]);
         for (const userId of sharedWith) {
@@ -269,7 +266,15 @@ router.put('/:id', auth, async (req, res) => {
       }
 
       await client.query('COMMIT');
-      res.json({ app: formatApp(result.rows[0]) });
+
+      const updated = await pool.query(
+        `SELECT a.*, u.display_name AS uploaded_by_name, u.email AS uploaded_by_email
+         FROM apps a LEFT JOIN users u ON a.uploaded_by = u.id
+         WHERE a.id = $1`,
+        [req.params.id]
+      );
+
+      res.json({ app: formatApp(updated.rows[0]) });
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;
@@ -282,18 +287,16 @@ router.put('/:id', auth, async (req, res) => {
   }
 });
 
-// DELETE /api/apps/:id - Soft delete an app
-router.delete('/:id', auth, async (req, res) => {
+// DELETE /api/apps/:id — soft delete an app
+router.delete('/:id', auth, validateId, async (req, res) => {
   try {
     const existing = await pool.query(
-      'SELECT * FROM apps WHERE id = $1 AND workspace_id = $2',
+      'SELECT * FROM apps WHERE id = $1 AND workspace_id = $2 AND is_active = true',
       [req.params.id, req.user.workspaceId]
     );
-
     if (existing.rows.length === 0) {
       return res.status(404).json({ error: 'App not found' });
     }
-
     if (existing.rows[0].uploaded_by !== req.user.id && req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Only the uploader or admin can delete this app' });
     }
@@ -303,27 +306,11 @@ router.delete('/:id', auth, async (req, res) => {
       [req.params.id]
     );
 
-    res.json({ message: 'App deleted' });
+    res.json({ ok: true });
   } catch (err) {
     console.error('Delete app error:', err);
     res.status(500).json({ error: 'Failed to delete app' });
   }
 });
-
-function formatApp(row) {
-  return {
-    id: row.id,
-    name: row.name,
-    description: row.description,
-    icon: row.icon,
-    visibility: row.visibility,
-    originalFilename: row.original_filename,
-    fileSize: row.file_size,
-    uploadedBy: row.uploaded_by_name || null,
-    uploadedByEmail: row.uploaded_by_email || null,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at
-  };
-}
 
 module.exports = router;
