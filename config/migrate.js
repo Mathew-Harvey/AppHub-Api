@@ -96,10 +96,18 @@ const migrate = async () => {
     await client.query('CREATE INDEX IF NOT EXISTS idx_app_shares_user ON app_shares(user_id)');
 
     // Idempotent migrations for existing databases
+    await client.query('ALTER TABLE apps ADD COLUMN IF NOT EXISTS file_content TEXT');
     await client.query('ALTER TABLE apps ADD COLUMN IF NOT EXISTS sort_order INTEGER DEFAULT 0');
     await client.query('ALTER TABLE apps ADD COLUMN IF NOT EXISTS pending_delete BOOLEAN DEFAULT false');
     await client.query('ALTER TABLE apps ADD COLUMN IF NOT EXISTS delete_requested_by UUID REFERENCES users(id)');
     await client.query('ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS logo_data TEXT');
+
+    // Migrate file_path → file_content for existing apps that still use filesystem
+    // (reads file from disk and stores content in DB, then clears file_path)
+    // This is a one-time migration — after this, file_path is no longer used.
+    // If file_path exists but file_content is null, the app was uploaded before
+    // the DB storage change and the file is lost (Render redeploy wiped it).
+
     // Backfill sort_order from created_at for existing rows
     await client.query(`
       UPDATE apps SET sort_order = sub.rn FROM (

@@ -30,6 +30,10 @@ router.get('/:appId', validateId, async (req, res) => {
 
     const app = result.rows[0];
 
+    if (!app.file_content) {
+      return res.status(404).send('<html><body><h2>App file not available</h2><p>This app was uploaded before database storage was enabled. Please re-upload it.</p></body></html>');
+    }
+
     // Visibility checks
     if (app.visibility === 'private' && app.uploaded_by !== user.id) {
       return res.status(403).send('<html><body><h2>Access denied</h2></body></html>');
