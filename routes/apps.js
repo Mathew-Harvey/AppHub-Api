@@ -2,7 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const rateLimit = require('express-rate-limit');
 const pool = require('../config/db');
-const { auth, validateId } = require('../middleware/auth');
+const { auth, adminOnly, validateId } = require('../middleware/auth');
 const { detectFileType, validateHtmlContent } = require('../services/fileDetection');
 
 const router = express.Router();
@@ -28,6 +28,7 @@ function formatApp(row) {
     icon: row.icon,
     visibility: row.visibility,
     sortOrder: row.sort_order,
+    pendingDelete: row.pending_delete || false,
     originalFilename: row.original_filename,
     fileSize: row.file_size,
     uploadedBy: row.uploaded_by_name || null,
@@ -46,7 +47,7 @@ router.get('/stats', auth, async (req, res) => {
         COUNT(DISTINCT uploaded_by) AS total_builders,
         COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days') AS new_this_week
        FROM apps
-       WHERE workspace_id = $1 AND is_active = true`,
+       WHERE workspace_id = $1 AND is_active = true AND pending_delete = false`,
       [req.user.workspaceId]
     );
 
@@ -55,9 +56,14 @@ router.get('/stats', auth, async (req, res) => {
               u.display_name AS uploaded_by
        FROM apps a
        LEFT JOIN users u ON a.uploaded_by = u.id
-       WHERE a.workspace_id = $1 AND a.is_active = true
+       WHERE a.workspace_id = $1 AND a.is_active = true AND a.pending_delete = false
        ORDER BY a.created_at DESC
        LIMIT 10`,
+      [req.user.workspaceId]
+    );
+
+    const pendingCount = await pool.query(
+      'SELECT COUNT(*) AS count FROM apps WHERE workspace_id = $1 AND is_active = true AND pending_delete = true',
       [req.user.workspaceId]
     );
 
@@ -66,6 +72,7 @@ router.get('/stats', auth, async (req, res) => {
       totalApps: parseInt(row.total_apps),
       totalBuilders: parseInt(row.total_builders),
       newThisWeek: parseInt(row.new_this_week),
+      pendingDeletions: parseInt(pendingCount.rows[0].count),
       recentActivity: recent.rows.map(r => ({
         appName: r.app_name,
         appIcon: r.app_icon,
@@ -88,7 +95,7 @@ router.post('/check', auth, (req, res) => {
   res.json(detectFileType(filename));
 });
 
-// PUT /api/apps/reorder — set custom sort order
+// PUT /api/apps/reorder
 router.put('/reorder', auth, async (req, res) => {
   const { appIds } = req.body;
   if (!Array.isArray(appIds) || appIds.length === 0) {
@@ -119,6 +126,65 @@ router.put('/reorder', auth, async (req, res) => {
   }
 });
 
+// GET /api/apps/pending-deletions — admin only
+router.get('/pending-deletions', auth, adminOnly, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT a.*, u.display_name AS uploaded_by_name, u.email AS uploaded_by_email,
+              r.display_name AS requested_by_name
+       FROM apps a
+       LEFT JOIN users u ON a.uploaded_by = u.id
+       LEFT JOIN users r ON a.delete_requested_by = r.id
+       WHERE a.workspace_id = $1 AND a.is_active = true AND a.pending_delete = true
+       ORDER BY a.updated_at DESC`,
+      [req.user.workspaceId]
+    );
+    res.json({
+      apps: result.rows.map(row => ({
+        ...formatApp(row),
+        requestedBy: row.requested_by_name || null
+      }))
+    });
+  } catch (err) {
+    console.error('Pending deletions error:', err);
+    res.status(500).json({ error: 'Failed to get pending deletions' });
+  }
+});
+
+// POST /api/apps/:id/approve-deletion — admin only
+router.post('/:id/approve-deletion', auth, adminOnly, validateId, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'UPDATE apps SET is_active = false, updated_at = NOW() WHERE id = $1 AND workspace_id = $2 AND pending_delete = true RETURNING id',
+      [req.params.id, req.user.workspaceId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'No pending deletion found' });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Approve deletion error:', err);
+    res.status(500).json({ error: 'Failed to approve deletion' });
+  }
+});
+
+// POST /api/apps/:id/reject-deletion — admin only
+router.post('/:id/reject-deletion', auth, adminOnly, validateId, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'UPDATE apps SET pending_delete = false, delete_requested_by = NULL, updated_at = NOW() WHERE id = $1 AND workspace_id = $2 AND pending_delete = true RETURNING id',
+      [req.params.id, req.user.workspaceId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'No pending deletion found' });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Reject deletion error:', err);
+    res.status(500).json({ error: 'Failed to reject deletion' });
+  }
+});
+
 // POST /api/apps/upload
 router.post('/upload', auth, uploadLimiter, upload.single('appFile'), async (req, res) => {
   try {
@@ -144,7 +210,6 @@ router.post('/upload', auth, uploadLimiter, upload.single('appFile'), async (req
     const fileContent = req.file.buffer.toString('utf-8');
     const validation = validateHtmlContent(fileContent, req.file.size);
 
-    // New apps get sort_order after the last existing app
     const maxOrder = await pool.query(
       'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM apps WHERE workspace_id = $1 AND is_active = true',
       [req.user.workspaceId]
@@ -159,16 +224,9 @@ router.post('/upload', auth, uploadLimiter, upload.single('appFile'), async (req
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING *`,
         [
-          req.user.workspaceId,
-          req.user.id,
-          name.trim(),
-          description?.trim() || null,
-          icon || '📱',
-          fileContent,
-          req.file.originalname,
-          req.file.size,
-          maxOrder.rows[0].next_order,
-          visibility || 'team'
+          req.user.workspaceId, req.user.id, name.trim(), description?.trim() || null,
+          icon || '📱', fileContent, req.file.originalname, req.file.size,
+          maxOrder.rows[0].next_order, visibility || 'team'
         ]
       );
 
@@ -188,8 +246,7 @@ router.post('/upload', auth, uploadLimiter, upload.single('appFile'), async (req
 
       const full = await pool.query(
         `SELECT a.*, u.display_name AS uploaded_by_name, u.email AS uploaded_by_email
-         FROM apps a LEFT JOIN users u ON a.uploaded_by = u.id
-         WHERE a.id = $1`,
+         FROM apps a LEFT JOIN users u ON a.uploaded_by = u.id WHERE a.id = $1`,
         [app.id]
       );
 
@@ -206,18 +263,20 @@ router.post('/upload', auth, uploadLimiter, upload.single('appFile'), async (req
   }
 });
 
-// GET /api/apps — list visible apps, ordered by sort_order then created_at
+// GET /api/apps — list visible apps (excludes pending deletions)
 router.get('/', auth, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT DISTINCT a.id, a.name, a.description, a.icon, a.visibility,
-              a.original_filename, a.file_size, a.sort_order, a.created_at, a.updated_at,
+              a.original_filename, a.file_size, a.sort_order, a.pending_delete,
+              a.created_at, a.updated_at,
               u.display_name AS uploaded_by_name, u.email AS uploaded_by_email
        FROM apps a
        LEFT JOIN users u ON a.uploaded_by = u.id
        LEFT JOIN app_shares s ON a.id = s.app_id AND s.user_id = $2
        WHERE a.workspace_id = $1
          AND a.is_active = true
+         AND a.pending_delete = false
          AND (
            a.visibility = 'team'
            OR (a.visibility = 'private' AND a.uploaded_by = $2)
@@ -227,7 +286,6 @@ router.get('/', auth, async (req, res) => {
        ORDER BY a.sort_order ASC, a.created_at DESC`,
       [req.user.workspaceId, req.user.id]
     );
-
     res.json({ apps: result.rows.map(formatApp) });
   } catch (err) {
     console.error('List apps error:', err);
@@ -240,38 +298,25 @@ router.get('/:id', auth, validateId, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT a.*, u.display_name AS uploaded_by_name, u.email AS uploaded_by_email
-       FROM apps a
-       LEFT JOIN users u ON a.uploaded_by = u.id
+       FROM apps a LEFT JOIN users u ON a.uploaded_by = u.id
        WHERE a.id = $1 AND a.workspace_id = $2 AND a.is_active = true`,
       [req.params.id, req.user.workspaceId]
     );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'App not found' });
-    }
+    if (result.rows.length === 0) return res.status(404).json({ error: 'App not found' });
 
     const app = result.rows[0];
-
     if (app.visibility === 'private' && app.uploaded_by !== req.user.id) {
       return res.status(403).json({ error: 'Access denied' });
     }
-
     if (app.visibility === 'specific' && app.uploaded_by !== req.user.id) {
-      const shareCheck = await pool.query(
-        'SELECT 1 FROM app_shares WHERE app_id = $1 AND user_id = $2',
-        [app.id, req.user.id]
-      );
-      if (shareCheck.rows.length === 0) {
-        return res.status(403).json({ error: 'Access denied' });
-      }
+      const shareCheck = await pool.query('SELECT 1 FROM app_shares WHERE app_id = $1 AND user_id = $2', [app.id, req.user.id]);
+      if (shareCheck.rows.length === 0) return res.status(403).json({ error: 'Access denied' });
     }
 
     let sharedWith = [];
     if (app.visibility === 'specific') {
       const shares = await pool.query(
-        `SELECT u.id, u.display_name, u.email
-         FROM app_shares s JOIN users u ON s.user_id = u.id
-         WHERE s.app_id = $1`,
+        'SELECT u.id, u.display_name, u.email FROM app_shares s JOIN users u ON s.user_id = u.id WHERE s.app_id = $1',
         [app.id]
       );
       sharedWith = shares.rows;
@@ -284,18 +329,12 @@ router.get('/:id', auth, validateId, async (req, res) => {
   }
 });
 
-// PUT /api/apps/:id — update app metadata
+// PUT /api/apps/:id — update metadata
 router.put('/:id', auth, validateId, async (req, res) => {
   const { name, description, icon, visibility, sharedWith } = req.body;
-
   try {
-    const existing = await pool.query(
-      'SELECT * FROM apps WHERE id = $1 AND workspace_id = $2 AND is_active = true',
-      [req.params.id, req.user.workspaceId]
-    );
-    if (existing.rows.length === 0) {
-      return res.status(404).json({ error: 'App not found' });
-    }
+    const existing = await pool.query('SELECT * FROM apps WHERE id = $1 AND workspace_id = $2 AND is_active = true', [req.params.id, req.user.workspaceId]);
+    if (existing.rows.length === 0) return res.status(404).json({ error: 'App not found' });
     if (existing.rows[0].uploaded_by !== req.user.id && req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Only the uploader or admin can edit this app' });
     }
@@ -303,37 +342,22 @@ router.put('/:id', auth, validateId, async (req, res) => {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-
       await client.query(
-        `UPDATE apps SET
-          name = COALESCE($1, name),
-          description = COALESCE($2, description),
-          icon = COALESCE($3, icon),
-          visibility = COALESCE($4, visibility),
-          updated_at = NOW()
-         WHERE id = $5`,
+        `UPDATE apps SET name = COALESCE($1, name), description = COALESCE($2, description),
+         icon = COALESCE($3, icon), visibility = COALESCE($4, visibility), updated_at = NOW() WHERE id = $5`,
         [name?.trim() || null, description?.trim(), icon, visibility, req.params.id]
       );
-
       if (visibility === 'specific' && sharedWith) {
         await client.query('DELETE FROM app_shares WHERE app_id = $1', [req.params.id]);
         for (const userId of sharedWith) {
-          await client.query(
-            'INSERT INTO app_shares (app_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-            [req.params.id, userId]
-          );
+          await client.query('INSERT INTO app_shares (app_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [req.params.id, userId]);
         }
       }
-
       await client.query('COMMIT');
-
       const updated = await pool.query(
-        `SELECT a.*, u.display_name AS uploaded_by_name, u.email AS uploaded_by_email
-         FROM apps a LEFT JOIN users u ON a.uploaded_by = u.id
-         WHERE a.id = $1`,
+        'SELECT a.*, u.display_name AS uploaded_by_name, u.email AS uploaded_by_email FROM apps a LEFT JOIN users u ON a.uploaded_by = u.id WHERE a.id = $1',
         [req.params.id]
       );
-
       res.json({ app: formatApp(updated.rows[0]) });
     } catch (err) {
       await client.query('ROLLBACK');
@@ -347,49 +371,31 @@ router.put('/:id', auth, validateId, async (req, res) => {
   }
 });
 
-// PUT /api/apps/:id/file — replace the HTML file for an existing app
+// PUT /api/apps/:id/file — replace HTML file
 router.put('/:id/file', auth, validateId, upload.single('appFile'), async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
-    }
-
-    const existing = await pool.query(
-      'SELECT * FROM apps WHERE id = $1 AND workspace_id = $2 AND is_active = true',
-      [req.params.id, req.user.workspaceId]
-    );
-    if (existing.rows.length === 0) {
-      return res.status(404).json({ error: 'App not found' });
-    }
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const existing = await pool.query('SELECT * FROM apps WHERE id = $1 AND workspace_id = $2 AND is_active = true', [req.params.id, req.user.workspaceId]);
+    if (existing.rows.length === 0) return res.status(404).json({ error: 'App not found' });
     if (existing.rows[0].uploaded_by !== req.user.id && req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Only the uploader or admin can update this app' });
     }
 
     const fileCheck = detectFileType(req.file.originalname);
     if (!fileCheck.supported) {
-      return res.status(400).json({
-        error: 'Unsupported file type',
-        detected: fileCheck.detected,
-        conversionPrompt: fileCheck.conversionPrompt
-      });
+      return res.status(400).json({ error: 'Unsupported file type', detected: fileCheck.detected, conversionPrompt: fileCheck.conversionPrompt });
     }
 
     const fileContent = req.file.buffer.toString('utf-8');
-
-    const result = await pool.query(
-      `UPDATE apps SET file_content = $1, original_filename = $2, file_size = $3, updated_at = NOW()
-       WHERE id = $4
-       RETURNING *`,
+    await pool.query(
+      'UPDATE apps SET file_content = $1, original_filename = $2, file_size = $3, updated_at = NOW() WHERE id = $4',
       [fileContent, req.file.originalname, req.file.size, req.params.id]
     );
 
     const full = await pool.query(
-      `SELECT a.*, u.display_name AS uploaded_by_name, u.email AS uploaded_by_email
-       FROM apps a LEFT JOIN users u ON a.uploaded_by = u.id
-       WHERE a.id = $1`,
+      'SELECT a.*, u.display_name AS uploaded_by_name, u.email AS uploaded_by_email FROM apps a LEFT JOIN users u ON a.uploaded_by = u.id WHERE a.id = $1',
       [req.params.id]
     );
-
     res.json({ app: formatApp(full.rows[0]) });
   } catch (err) {
     console.error('Update file error:', err);
@@ -397,26 +403,28 @@ router.put('/:id/file', auth, validateId, upload.single('appFile'), async (req, 
   }
 });
 
-// DELETE /api/apps/:id — soft delete
+// DELETE /api/apps/:id — admin: immediate. member: pending approval.
 router.delete('/:id', auth, validateId, async (req, res) => {
   try {
     const existing = await pool.query(
-      'SELECT * FROM apps WHERE id = $1 AND workspace_id = $2 AND is_active = true',
+      'SELECT * FROM apps WHERE id = $1 AND workspace_id = $2 AND is_active = true AND pending_delete = false',
       [req.params.id, req.user.workspaceId]
     );
-    if (existing.rows.length === 0) {
-      return res.status(404).json({ error: 'App not found' });
-    }
+    if (existing.rows.length === 0) return res.status(404).json({ error: 'App not found' });
     if (existing.rows[0].uploaded_by !== req.user.id && req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Only the uploader or admin can delete this app' });
     }
 
-    await pool.query(
-      'UPDATE apps SET is_active = false, updated_at = NOW() WHERE id = $1',
-      [req.params.id]
-    );
-
-    res.json({ ok: true });
+    if (req.user.role === 'admin') {
+      await pool.query('UPDATE apps SET is_active = false, updated_at = NOW() WHERE id = $1', [req.params.id]);
+      res.json({ ok: true, pending: false });
+    } else {
+      await pool.query(
+        'UPDATE apps SET pending_delete = true, delete_requested_by = $1, updated_at = NOW() WHERE id = $2',
+        [req.user.id, req.params.id]
+      );
+      res.json({ ok: true, pending: true });
+    }
   } catch (err) {
     console.error('Delete app error:', err);
     res.status(500).json({ error: 'Failed to delete app' });
