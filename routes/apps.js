@@ -1,7 +1,6 @@
 const express = require('express');
 const multer = require('multer');
 const rateLimit = require('express-rate-limit');
-const path = require('path');
 const pool = require('../config/db');
 const { auth, validateId } = require('../middleware/auth');
 const { detectFileType, validateHtmlContent } = require('../services/fileDetection');
@@ -16,7 +15,6 @@ const uploadLimiter = rateLimit({
   message: { error: 'Upload limit reached, please try again later' }
 });
 
-// Multer memory storage — file held in buffer, then stored in Postgres
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: parseInt(process.env.MAX_FILE_SIZE) || 5 * 1024 * 1024 }
@@ -29,6 +27,7 @@ function formatApp(row) {
     description: row.description,
     icon: row.icon,
     visibility: row.visibility,
+    sortOrder: row.sort_order,
     originalFilename: row.original_filename,
     fileSize: row.file_size,
     uploadedBy: row.uploaded_by_name || null,
@@ -38,7 +37,7 @@ function formatApp(row) {
   };
 }
 
-// GET /api/apps/stats — dashboard stats and recent activity
+// GET /api/apps/stats
 router.get('/stats', auth, async (req, res) => {
   try {
     const counts = await pool.query(
@@ -80,7 +79,7 @@ router.get('/stats', auth, async (req, res) => {
   }
 });
 
-// POST /api/apps/check — validate file type before upload
+// POST /api/apps/check
 router.post('/check', auth, (req, res) => {
   const { filename } = req.body;
   if (!filename) {
@@ -89,7 +88,38 @@ router.post('/check', auth, (req, res) => {
   res.json(detectFileType(filename));
 });
 
-// POST /api/apps/upload — upload an HTML app (stored in DB, not filesystem)
+// PUT /api/apps/reorder — set custom sort order
+router.put('/reorder', auth, async (req, res) => {
+  const { appIds } = req.body;
+  if (!Array.isArray(appIds) || appIds.length === 0) {
+    return res.status(400).json({ error: 'appIds array is required' });
+  }
+
+  try {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      for (let i = 0; i < appIds.length; i++) {
+        await client.query(
+          'UPDATE apps SET sort_order = $1 WHERE id = $2 AND workspace_id = $3',
+          [i, appIds[i], req.user.workspaceId]
+        );
+      }
+      await client.query('COMMIT');
+      res.json({ ok: true });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error('Reorder error:', err);
+    res.status(500).json({ error: 'Failed to reorder apps' });
+  }
+});
+
+// POST /api/apps/upload
 router.post('/upload', auth, uploadLimiter, upload.single('appFile'), async (req, res) => {
   try {
     if (!req.file) {
@@ -111,17 +141,22 @@ router.post('/upload', auth, uploadLimiter, upload.single('appFile'), async (req
       });
     }
 
-    // Read HTML content from memory buffer
     const fileContent = req.file.buffer.toString('utf-8');
     const validation = validateHtmlContent(fileContent, req.file.size);
+
+    // New apps get sort_order after the last existing app
+    const maxOrder = await pool.query(
+      'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM apps WHERE workspace_id = $1 AND is_active = true',
+      [req.user.workspaceId]
+    );
 
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
 
       const result = await client.query(
-        `INSERT INTO apps (workspace_id, uploaded_by, name, description, icon, file_content, original_filename, file_size, visibility)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        `INSERT INTO apps (workspace_id, uploaded_by, name, description, icon, file_content, original_filename, file_size, sort_order, visibility)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING *`,
         [
           req.user.workspaceId,
@@ -132,6 +167,7 @@ router.post('/upload', auth, uploadLimiter, upload.single('appFile'), async (req
           fileContent,
           req.file.originalname,
           req.file.size,
+          maxOrder.rows[0].next_order,
           visibility || 'team'
         ]
       );
@@ -170,12 +206,12 @@ router.post('/upload', auth, uploadLimiter, upload.single('appFile'), async (req
   }
 });
 
-// GET /api/apps — list all visible apps for current user
+// GET /api/apps — list visible apps, ordered by sort_order then created_at
 router.get('/', auth, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT DISTINCT a.id, a.name, a.description, a.icon, a.visibility,
-              a.original_filename, a.file_size, a.created_at, a.updated_at,
+              a.original_filename, a.file_size, a.sort_order, a.created_at, a.updated_at,
               u.display_name AS uploaded_by_name, u.email AS uploaded_by_email
        FROM apps a
        LEFT JOIN users u ON a.uploaded_by = u.id
@@ -188,7 +224,7 @@ router.get('/', auth, async (req, res) => {
            OR (a.visibility = 'specific' AND s.user_id IS NOT NULL)
            OR a.uploaded_by = $2
          )
-       ORDER BY a.created_at DESC`,
+       ORDER BY a.sort_order ASC, a.created_at DESC`,
       [req.user.workspaceId, req.user.id]
     );
 
@@ -199,7 +235,7 @@ router.get('/', auth, async (req, res) => {
   }
 });
 
-// GET /api/apps/:id — get single app details
+// GET /api/apps/:id
 router.get('/:id', auth, validateId, async (req, res) => {
   try {
     const result = await pool.query(
@@ -311,7 +347,57 @@ router.put('/:id', auth, validateId, async (req, res) => {
   }
 });
 
-// DELETE /api/apps/:id — soft delete an app
+// PUT /api/apps/:id/file — replace the HTML file for an existing app
+router.put('/:id/file', auth, validateId, upload.single('appFile'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    const existing = await pool.query(
+      'SELECT * FROM apps WHERE id = $1 AND workspace_id = $2 AND is_active = true',
+      [req.params.id, req.user.workspaceId]
+    );
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: 'App not found' });
+    }
+    if (existing.rows[0].uploaded_by !== req.user.id && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only the uploader or admin can update this app' });
+    }
+
+    const fileCheck = detectFileType(req.file.originalname);
+    if (!fileCheck.supported) {
+      return res.status(400).json({
+        error: 'Unsupported file type',
+        detected: fileCheck.detected,
+        conversionPrompt: fileCheck.conversionPrompt
+      });
+    }
+
+    const fileContent = req.file.buffer.toString('utf-8');
+
+    const result = await pool.query(
+      `UPDATE apps SET file_content = $1, original_filename = $2, file_size = $3, updated_at = NOW()
+       WHERE id = $4
+       RETURNING *`,
+      [fileContent, req.file.originalname, req.file.size, req.params.id]
+    );
+
+    const full = await pool.query(
+      `SELECT a.*, u.display_name AS uploaded_by_name, u.email AS uploaded_by_email
+       FROM apps a LEFT JOIN users u ON a.uploaded_by = u.id
+       WHERE a.id = $1`,
+      [req.params.id]
+    );
+
+    res.json({ app: formatApp(full.rows[0]) });
+  } catch (err) {
+    console.error('Update file error:', err);
+    res.status(500).json({ error: 'Failed to update app file' });
+  }
+});
+
+// DELETE /api/apps/:id — soft delete
 router.delete('/:id', auth, validateId, async (req, res) => {
   try {
     const existing = await pool.query(

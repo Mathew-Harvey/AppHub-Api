@@ -542,6 +542,103 @@ describe('PUT /api/apps/:id', () => {
   });
 });
 
+// ─── Apps: Reorder ──────────────────────────────────────────────────────────
+
+let secondAppId;
+
+describe('PUT /api/apps/reorder', () => {
+  it('creates a second app for reorder test', async () => {
+    const res = await request(app)
+      .post('/api/apps/upload')
+      .set('Cookie', adminCookie)
+      .attach('appFile', Buffer.from(testHtml), 'second.html')
+      .field('name', 'Second App');
+    expect(res.status).toBe(201);
+    secondAppId = res.body.app.id;
+  });
+
+  it('rejects empty body', async () => {
+    const res = await request(app)
+      .put('/api/apps/reorder')
+      .set('Cookie', adminCookie)
+      .send({});
+    expect(res.status).toBe(400);
+  });
+
+  it('reorders apps', async () => {
+    const res = await request(app)
+      .put('/api/apps/reorder')
+      .set('Cookie', adminCookie)
+      .send({ appIds: [secondAppId, appId] });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+
+    // Verify order
+    const list = await request(app)
+      .get('/api/apps')
+      .set('Cookie', adminCookie);
+    const ids = list.body.apps.map(a => a.id);
+    expect(ids.indexOf(secondAppId)).toBeLessThan(ids.indexOf(appId));
+  });
+});
+
+// ─── Apps: Update file ──────────────────────────────────────────────────────
+
+describe('PUT /api/apps/:id/file', () => {
+  const updatedHtml = '<html><body><h1>Updated Version</h1></body></html>';
+
+  it('rejects unauthenticated', async () => {
+    const res = await request(app)
+      .put(`/api/apps/${appId}/file`)
+      .attach('appFile', Buffer.from(updatedHtml), 'updated.html');
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects non-owner non-admin', async () => {
+    const res = await request(app)
+      .put(`/api/apps/${appId}/file`)
+      .set('Cookie', memberCookie)
+      .attach('appFile', Buffer.from(updatedHtml), 'updated.html');
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects missing file', async () => {
+    const res = await request(app)
+      .put(`/api/apps/${appId}/file`)
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(400);
+  });
+
+  it('updates app file successfully', async () => {
+    const res = await request(app)
+      .put(`/api/apps/${appId}/file`)
+      .set('Cookie', adminCookie)
+      .attach('appFile', Buffer.from(updatedHtml), 'updated.html');
+
+    expect(res.status).toBe(200);
+    expect(res.body.app.originalFilename).toBe('updated.html');
+    expect(res.body.app.fileSize).toBe(updatedHtml.length);
+  });
+
+  it('rejects non-html file', async () => {
+    const res = await request(app)
+      .put(`/api/apps/${appId}/file`)
+      .set('Cookie', adminCookie)
+      .attach('appFile', Buffer.from('console.log("hi")'), 'app.js');
+    expect(res.status).toBe(400);
+    expect(res.body.detected).toBeDefined();
+    expect(res.body.conversionPrompt).toBeDefined();
+  });
+
+  it('serves updated content in sandbox', async () => {
+    const res = await request(app)
+      .get(`/sandbox/${appId}`)
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('Updated Version');
+  });
+});
+
 // ─── Apps: Visibility (private) ─────────────────────────────────────────────
 
 let privateAppId;

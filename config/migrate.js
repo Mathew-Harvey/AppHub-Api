@@ -3,7 +3,7 @@ require('dotenv').config();
 
 const migrate = async () => {
   const client = await pool.connect();
-  
+
   try {
     await client.query('BEGIN');
 
@@ -16,7 +16,7 @@ const migrate = async () => {
         id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
         name VARCHAR(255) NOT NULL,
         slug VARCHAR(255) UNIQUE NOT NULL,
-        logo_path VARCHAR(500),
+        logo_data TEXT,
         primary_color VARCHAR(7) DEFAULT '#1a1a2e',
         accent_color VARCHAR(7) DEFAULT '#e94560',
         created_at TIMESTAMP DEFAULT NOW(),
@@ -40,7 +40,7 @@ const migrate = async () => {
       )
     `);
 
-    // Invitations table (whitelist)
+    // Invitations table
     await client.query(`
       CREATE TABLE IF NOT EXISTS invitations (
         id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -53,7 +53,7 @@ const migrate = async () => {
       )
     `);
 
-    // Apps table — HTML content stored directly in DB (no filesystem dependency)
+    // Apps table — HTML content stored directly in DB
     await client.query(`
       CREATE TABLE IF NOT EXISTS apps (
         id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -65,6 +65,7 @@ const migrate = async () => {
         file_content TEXT NOT NULL,
         original_filename VARCHAR(255),
         file_size INTEGER,
+        sort_order INTEGER DEFAULT 0,
         visibility VARCHAR(20) DEFAULT 'team' CHECK (visibility IN ('private', 'team', 'specific')),
         is_active BOOLEAN DEFAULT true,
         created_at TIMESTAMP DEFAULT NOW(),
@@ -92,11 +93,22 @@ const migrate = async () => {
     await client.query('CREATE INDEX IF NOT EXISTS idx_app_shares_app ON app_shares(app_id)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_app_shares_user ON app_shares(user_id)');
 
+    // Idempotent migrations for existing databases
+    await client.query('ALTER TABLE apps ADD COLUMN IF NOT EXISTS sort_order INTEGER DEFAULT 0');
+    await client.query('ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS logo_data TEXT');
+    // Backfill sort_order from created_at for existing rows
+    await client.query(`
+      UPDATE apps SET sort_order = sub.rn FROM (
+        SELECT id, ROW_NUMBER() OVER (PARTITION BY workspace_id ORDER BY created_at) - 1 AS rn
+        FROM apps WHERE sort_order = 0
+      ) sub WHERE apps.id = sub.id AND apps.sort_order = 0
+    `);
+
     await client.query('COMMIT');
-    console.log('✅ Database migration completed successfully');
+    console.log('Database migration completed successfully');
   } catch (err) {
     await client.query('ROLLBACK');
-    console.error('❌ Migration failed:', err.message);
+    console.error('Migration failed:', err.message);
     throw err;
   } finally {
     client.release();

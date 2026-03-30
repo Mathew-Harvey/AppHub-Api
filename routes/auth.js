@@ -30,7 +30,7 @@ async function getUserProfile(userId) {
   const result = await pool.query(
     `SELECT u.id, u.email, u.display_name, u.role, u.workspace_id,
             w.name AS workspace_name, w.slug AS workspace_slug,
-            w.logo_path, w.primary_color, w.accent_color
+            w.logo_data, w.primary_color, w.accent_color
      FROM users u
      JOIN workspaces w ON u.workspace_id = w.id
      WHERE u.id = $1 AND u.is_active = true`,
@@ -49,7 +49,7 @@ async function getUserProfile(userId) {
     workspace: {
       name: row.workspace_name,
       slug: row.workspace_slug,
-      logoPath: row.logo_path,
+      logoData: row.logo_data,
       primaryColor: row.primary_color,
       accentColor: row.accent_color
     }

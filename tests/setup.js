@@ -1,10 +1,3 @@
-/**
- * Test setup — creates a fresh test database schema before each test run.
- * Uses the same Postgres connection (DATABASE_URL) but prefixes tables
- * with test isolation via transactions that roll back.
- *
- * For CI: set DATABASE_URL to a test-specific database.
- */
 const pool = require('../config/db');
 
 async function migrate() {
@@ -12,7 +5,6 @@ async function migrate() {
   try {
     await client.query('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"');
 
-    // Drop tables in reverse dependency order for clean state
     await client.query('DROP TABLE IF EXISTS app_shares CASCADE');
     await client.query('DROP TABLE IF EXISTS apps CASCADE');
     await client.query('DROP TABLE IF EXISTS invitations CASCADE');
@@ -24,7 +16,7 @@ async function migrate() {
         id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
         name VARCHAR(255) NOT NULL,
         slug VARCHAR(255) UNIQUE NOT NULL,
-        logo_path VARCHAR(500),
+        logo_data TEXT,
         primary_color VARCHAR(7) DEFAULT '#1a1a2e',
         accent_color VARCHAR(7) DEFAULT '#e94560',
         created_at TIMESTAMP DEFAULT NOW(),
@@ -70,6 +62,7 @@ async function migrate() {
         file_content TEXT NOT NULL,
         original_filename VARCHAR(255),
         file_size INTEGER,
+        sort_order INTEGER DEFAULT 0,
         visibility VARCHAR(20) DEFAULT 'team' CHECK (visibility IN ('private', 'team', 'specific')),
         is_active BOOLEAN DEFAULT true,
         created_at TIMESTAMP DEFAULT NOW(),
