@@ -377,6 +377,27 @@ describe('POST /api/apps/check', () => {
   });
 });
 
+// ─── Apps: Stats ────────────────────────────────────────────────────────────
+
+describe('GET /api/apps/stats', () => {
+  it('returns 401 without auth', async () => {
+    const res = await request(app).get('/api/apps/stats');
+    expect(res.status).toBe(401);
+  });
+
+  it('returns stats structure', async () => {
+    const res = await request(app)
+      .get('/api/apps/stats')
+      .set('Cookie', adminCookie);
+
+    expect(res.status).toBe(200);
+    expect(typeof res.body.totalApps).toBe('number');
+    expect(typeof res.body.totalBuilders).toBe('number');
+    expect(typeof res.body.newThisWeek).toBe('number');
+    expect(Array.isArray(res.body.recentActivity)).toBe(true);
+  });
+});
+
 // ─── Apps: Upload ───────────────────────────────────────────────────────────
 
 let appId;
@@ -439,6 +460,26 @@ describe('POST /api/apps/upload', () => {
 
     appId = res.body.app.id;
     fs.unlinkSync(tmpFile);
+  });
+});
+
+// ─── Apps: Stats (with data) ────────────────────────────────────────────────
+
+describe('GET /api/apps/stats (after upload)', () => {
+  it('reflects uploaded app in counts and activity', async () => {
+    const res = await request(app)
+      .get('/api/apps/stats')
+      .set('Cookie', adminCookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.totalApps).toBeGreaterThanOrEqual(1);
+    expect(res.body.totalBuilders).toBeGreaterThanOrEqual(1);
+    expect(res.body.newThisWeek).toBeGreaterThanOrEqual(1);
+    expect(res.body.recentActivity.length).toBeGreaterThanOrEqual(1);
+    expect(res.body.recentActivity[0].appName).toBeDefined();
+    expect(res.body.recentActivity[0].uploadedBy).toBeDefined();
+    expect(res.body.recentActivity[0].appIcon).toBeDefined();
+    expect(res.body.recentActivity[0].createdAt).toBeDefined();
   });
 });
 

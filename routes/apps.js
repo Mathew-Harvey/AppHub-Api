@@ -52,6 +52,48 @@ function formatApp(row) {
   };
 }
 
+// GET /api/apps/stats — dashboard stats and recent activity
+router.get('/stats', auth, async (req, res) => {
+  try {
+    const counts = await pool.query(
+      `SELECT
+        COUNT(*) AS total_apps,
+        COUNT(DISTINCT uploaded_by) AS total_builders,
+        COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days') AS new_this_week
+       FROM apps
+       WHERE workspace_id = $1 AND is_active = true`,
+      [req.user.workspaceId]
+    );
+
+    const recent = await pool.query(
+      `SELECT a.name AS app_name, a.icon AS app_icon, a.created_at,
+              u.display_name AS uploaded_by
+       FROM apps a
+       LEFT JOIN users u ON a.uploaded_by = u.id
+       WHERE a.workspace_id = $1 AND a.is_active = true
+       ORDER BY a.created_at DESC
+       LIMIT 10`,
+      [req.user.workspaceId]
+    );
+
+    const row = counts.rows[0];
+    res.json({
+      totalApps: parseInt(row.total_apps),
+      totalBuilders: parseInt(row.total_builders),
+      newThisWeek: parseInt(row.new_this_week),
+      recentActivity: recent.rows.map(r => ({
+        appName: r.app_name,
+        appIcon: r.app_icon,
+        uploadedBy: r.uploaded_by,
+        createdAt: r.created_at
+      }))
+    });
+  } catch (err) {
+    console.error('Stats error:', err);
+    res.status(500).json({ error: 'Failed to get stats' });
+  }
+});
+
 // POST /api/apps/check — validate file type before upload
 router.post('/check', auth, (req, res) => {
   const { filename } = req.body;
