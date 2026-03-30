@@ -53,7 +53,7 @@ const migrate = async () => {
       )
     `);
 
-    // Apps table
+    // Apps table — HTML content stored directly in DB (no filesystem dependency)
     await client.query(`
       CREATE TABLE IF NOT EXISTS apps (
         id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -62,7 +62,7 @@ const migrate = async () => {
         name VARCHAR(255) NOT NULL,
         description TEXT,
         icon VARCHAR(10) DEFAULT '📱',
-        file_path VARCHAR(500) NOT NULL,
+        file_content TEXT NOT NULL,
         original_filename VARCHAR(255),
         file_size INTEGER,
         visibility VARCHAR(20) DEFAULT 'team' CHECK (visibility IN ('private', 'team', 'specific')),

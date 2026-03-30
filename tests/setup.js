@@ -67,7 +67,7 @@ async function migrate() {
         name VARCHAR(255) NOT NULL,
         description TEXT,
         icon VARCHAR(10) DEFAULT '📱',
-        file_path VARCHAR(500) NOT NULL,
+        file_content TEXT NOT NULL,
         original_filename VARCHAR(255),
         file_size INTEGER,
         visibility VARCHAR(20) DEFAULT 'team' CHECK (visibility IN ('private', 'team', 'specific')),

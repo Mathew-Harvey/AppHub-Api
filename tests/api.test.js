@@ -1,6 +1,4 @@
 const request = require('supertest');
-const path = require('path');
-const fs = require('fs');
 const app = require('../index');
 const { migrate, teardown, pool } = require('./setup');
 
@@ -13,10 +11,6 @@ let workspaceId;
 
 beforeAll(async () => {
   await migrate();
-
-  // Ensure test upload directory exists
-  const uploadDir = process.env.UPLOAD_DIR || './uploads';
-  fs.mkdirSync(uploadDir, { recursive: true });
 });
 
 afterAll(async () => {
@@ -421,29 +415,20 @@ describe('POST /api/apps/upload', () => {
   });
 
   it('rejects missing name', async () => {
-    // Create temp test file
-    const tmpFile = path.join(__dirname, 'test-app.html');
-    fs.writeFileSync(tmpFile, testHtml);
-
     const res = await request(app)
       .post('/api/apps/upload')
       .set('Cookie', adminCookie)
-      .attach('appFile', tmpFile);
+      .attach('appFile', Buffer.from(testHtml), 'test.html');
 
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/name/i);
-
-    fs.unlinkSync(tmpFile);
   });
 
   it('uploads an HTML app successfully', async () => {
-    const tmpFile = path.join(__dirname, 'test-app.html');
-    fs.writeFileSync(tmpFile, testHtml);
-
     const res = await request(app)
       .post('/api/apps/upload')
       .set('Cookie', adminCookie)
-      .attach('appFile', tmpFile)
+      .attach('appFile', Buffer.from(testHtml), 'test-app.html')
       .field('name', 'My Test App')
       .field('description', 'A test application')
       .field('icon', '🚀')
@@ -459,7 +444,6 @@ describe('POST /api/apps/upload', () => {
     expect(res.body.validation).toBeDefined();
 
     appId = res.body.app.id;
-    fs.unlinkSync(tmpFile);
   });
 });
 
@@ -564,19 +548,15 @@ let privateAppId;
 
 describe('App visibility', () => {
   it('admin uploads a private app', async () => {
-    const tmpFile = path.join(__dirname, 'private-app.html');
-    fs.writeFileSync(tmpFile, testHtml);
-
     const res = await request(app)
       .post('/api/apps/upload')
       .set('Cookie', adminCookie)
-      .attach('appFile', tmpFile)
+      .attach('appFile', Buffer.from(testHtml), 'private-app.html')
       .field('name', 'Private App')
       .field('visibility', 'private');
 
     expect(res.status).toBe(201);
     privateAppId = res.body.app.id;
-    fs.unlinkSync(tmpFile);
   });
 
   it('member cannot see private app', async () => {
@@ -698,18 +678,13 @@ describe('GET /sandbox/:appId', () => {
   let sandboxAppId;
 
   beforeAll(async () => {
-    // Upload an app for sandbox testing
-    const tmpFile = path.join(__dirname, 'sandbox-test.html');
-    fs.writeFileSync(tmpFile, '<html><body><h1>Sandbox Test</h1></body></html>');
-
     const res = await request(app)
       .post('/api/apps/upload')
       .set('Cookie', adminCookie)
-      .attach('appFile', tmpFile)
+      .attach('appFile', Buffer.from('<html><body><h1>Sandbox Test</h1></body></html>'), 'sandbox-test.html')
       .field('name', 'Sandbox App');
 
     sandboxAppId = res.body.app.id;
-    fs.unlinkSync(tmpFile);
   });
 
   it('returns 401 without auth', async () => {

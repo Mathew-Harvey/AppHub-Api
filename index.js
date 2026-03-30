@@ -4,7 +4,6 @@ const helmet = require('helmet');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
-const fs = require('fs');
 
 const authRoutes = require('./routes/auth');
 const appRoutes = require('./routes/apps');
@@ -13,12 +12,6 @@ const sandboxRoutes = require('./routes/sandbox');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-
-// Ensure upload directory exists
-const uploadDir = process.env.UPLOAD_DIR || './uploads';
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
 
 // Security headers
 app.use(helmet({

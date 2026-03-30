@@ -2,11 +2,9 @@ const express = require('express');
 const multer = require('multer');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
-const fs = require('fs');
-const { v4: uuidv4 } = require('uuid');
 const pool = require('../config/db');
 const { auth, validateId } = require('../middleware/auth');
-const { detectFileType, validateHtmlFile } = require('../services/fileDetection');
+const { detectFileType, validateHtmlContent } = require('../services/fileDetection');
 
 const router = express.Router();
 
@@ -18,21 +16,9 @@ const uploadLimiter = rateLimit({
   message: { error: 'Upload limit reached, please try again later' }
 });
 
-// Multer config — files stored per workspace
-const storage = multer.diskStorage({
-  destination(req, file, cb) {
-    const uploadDir = process.env.UPLOAD_DIR || './uploads';
-    const workspaceDir = path.join(uploadDir, req.user.workspaceId);
-    fs.mkdirSync(workspaceDir, { recursive: true });
-    cb(null, workspaceDir);
-  },
-  filename(req, file, cb) {
-    cb(null, `${uuidv4()}${path.extname(file.originalname)}`);
-  }
-});
-
+// Multer memory storage — file held in buffer, then stored in Postgres
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: parseInt(process.env.MAX_FILE_SIZE) || 5 * 1024 * 1024 }
 });
 
@@ -103,7 +89,7 @@ router.post('/check', auth, (req, res) => {
   res.json(detectFileType(filename));
 });
 
-// POST /api/apps/upload — upload an HTML app
+// POST /api/apps/upload — upload an HTML app (stored in DB, not filesystem)
 router.post('/upload', auth, uploadLimiter, upload.single('appFile'), async (req, res) => {
   try {
     if (!req.file) {
@@ -113,13 +99,11 @@ router.post('/upload', auth, uploadLimiter, upload.single('appFile'), async (req
     const { name, description, icon, visibility, sharedWith } = req.body;
 
     if (!name || !name.trim()) {
-      fs.unlinkSync(req.file.path);
       return res.status(400).json({ error: 'App name is required' });
     }
 
     const fileCheck = detectFileType(req.file.originalname);
     if (!fileCheck.supported) {
-      fs.unlinkSync(req.file.path);
       return res.status(400).json({
         error: 'Unsupported file type',
         detected: fileCheck.detected,
@@ -127,15 +111,16 @@ router.post('/upload', auth, uploadLimiter, upload.single('appFile'), async (req
       });
     }
 
-    const validation = validateHtmlFile(req.file.path);
-    const relativePath = path.relative(process.env.UPLOAD_DIR || './uploads', req.file.path);
+    // Read HTML content from memory buffer
+    const fileContent = req.file.buffer.toString('utf-8');
+    const validation = validateHtmlContent(fileContent, req.file.size);
 
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
 
       const result = await client.query(
-        `INSERT INTO apps (workspace_id, uploaded_by, name, description, icon, file_path, original_filename, file_size, visibility)
+        `INSERT INTO apps (workspace_id, uploaded_by, name, description, icon, file_content, original_filename, file_size, visibility)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING *`,
         [
@@ -144,7 +129,7 @@ router.post('/upload', auth, uploadLimiter, upload.single('appFile'), async (req
           name.trim(),
           description?.trim() || null,
           icon || '📱',
-          relativePath,
+          fileContent,
           req.file.originalname,
           req.file.size,
           visibility || 'team'
@@ -165,7 +150,6 @@ router.post('/upload', auth, uploadLimiter, upload.single('appFile'), async (req
 
       await client.query('COMMIT');
 
-      // Fetch with uploader info for consistent response shape
       const full = await pool.query(
         `SELECT a.*, u.display_name AS uploaded_by_name, u.email AS uploaded_by_email
          FROM apps a LEFT JOIN users u ON a.uploaded_by = u.id
@@ -176,8 +160,6 @@ router.post('/upload', auth, uploadLimiter, upload.single('appFile'), async (req
       res.status(201).json({ app: formatApp(full.rows[0]), validation });
     } catch (err) {
       await client.query('ROLLBACK');
-      // Clean up orphaned file on DB failure
-      try { fs.unlinkSync(req.file.path); } catch {}
       throw err;
     } finally {
       client.release();
