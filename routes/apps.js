@@ -1,11 +1,18 @@
 const express = require('express');
 const multer = require('multer');
+const rateLimit = require('express-rate-limit');
 const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../config/db');
 const { auth } = require('../middleware/auth');
 const { detectFileType, validateHtmlFile } = require('../services/fileDetection');
+
+const uploadLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 50,
+  message: { error: 'Upload limit reached, please try again later' }
+});
 
 const router = express.Router();
 
@@ -47,7 +54,7 @@ router.post('/check', auth, (req, res) => {
 });
 
 // POST /api/apps/upload - Upload an HTML app
-router.post('/upload', auth, upload.single('appFile'), async (req, res) => {
+router.post('/upload', auth, uploadLimiter, upload.single('appFile'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });

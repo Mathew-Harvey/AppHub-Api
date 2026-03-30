@@ -58,10 +58,10 @@ const authLimiter = rateLimit({
   message: { error: 'Too many attempts, please try again later' }
 });
 
-const uploadLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,
-  max: 50,
-  message: { error: 'Upload limit reached, please try again later' }
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  message: { error: 'Too many requests, please try again later' }
 });
 
 // Health check
@@ -71,7 +71,7 @@ app.get('/api/health', (req, res) => {
 
 // API routes
 app.use('/api/auth', authLimiter, authRoutes);
-app.use('/api/apps', uploadLimiter, appRoutes);
+app.use('/api/apps', apiLimiter, appRoutes);
 app.use('/api/workspace', workspaceRoutes);
 
 // Sandbox route (serves HTML apps in iframe)
