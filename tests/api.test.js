@@ -1,6 +1,4 @@
 const request = require('supertest');
-const path = require('path');
-const fs = require('fs');
 const app = require('../index');
 const { migrate, teardown, pool } = require('./setup');
 
@@ -13,10 +11,6 @@ let workspaceId;
 
 beforeAll(async () => {
   await migrate();
-
-  // Ensure test upload directory exists
-  const uploadDir = process.env.UPLOAD_DIR || './uploads';
-  fs.mkdirSync(uploadDir, { recursive: true });
 });
 
 afterAll(async () => {
@@ -377,6 +371,27 @@ describe('POST /api/apps/check', () => {
   });
 });
 
+// ─── Apps: Stats ────────────────────────────────────────────────────────────
+
+describe('GET /api/apps/stats', () => {
+  it('returns 401 without auth', async () => {
+    const res = await request(app).get('/api/apps/stats');
+    expect(res.status).toBe(401);
+  });
+
+  it('returns stats structure', async () => {
+    const res = await request(app)
+      .get('/api/apps/stats')
+      .set('Cookie', adminCookie);
+
+    expect(res.status).toBe(200);
+    expect(typeof res.body.totalApps).toBe('number');
+    expect(typeof res.body.totalBuilders).toBe('number');
+    expect(typeof res.body.newThisWeek).toBe('number');
+    expect(Array.isArray(res.body.recentActivity)).toBe(true);
+  });
+});
+
 // ─── Apps: Upload ───────────────────────────────────────────────────────────
 
 let appId;
@@ -400,29 +415,20 @@ describe('POST /api/apps/upload', () => {
   });
 
   it('rejects missing name', async () => {
-    // Create temp test file
-    const tmpFile = path.join(__dirname, 'test-app.html');
-    fs.writeFileSync(tmpFile, testHtml);
-
     const res = await request(app)
       .post('/api/apps/upload')
       .set('Cookie', adminCookie)
-      .attach('appFile', tmpFile);
+      .attach('appFile', Buffer.from(testHtml), 'test.html');
 
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/name/i);
-
-    fs.unlinkSync(tmpFile);
   });
 
   it('uploads an HTML app successfully', async () => {
-    const tmpFile = path.join(__dirname, 'test-app.html');
-    fs.writeFileSync(tmpFile, testHtml);
-
     const res = await request(app)
       .post('/api/apps/upload')
       .set('Cookie', adminCookie)
-      .attach('appFile', tmpFile)
+      .attach('appFile', Buffer.from(testHtml), 'test-app.html')
       .field('name', 'My Test App')
       .field('description', 'A test application')
       .field('icon', '🚀')
@@ -438,7 +444,26 @@ describe('POST /api/apps/upload', () => {
     expect(res.body.validation).toBeDefined();
 
     appId = res.body.app.id;
-    fs.unlinkSync(tmpFile);
+  });
+});
+
+// ─── Apps: Stats (with data) ────────────────────────────────────────────────
+
+describe('GET /api/apps/stats (after upload)', () => {
+  it('reflects uploaded app in counts and activity', async () => {
+    const res = await request(app)
+      .get('/api/apps/stats')
+      .set('Cookie', adminCookie);
+
+    expect(res.status).toBe(200);
+    expect(res.body.totalApps).toBeGreaterThanOrEqual(1);
+    expect(res.body.totalBuilders).toBeGreaterThanOrEqual(1);
+    expect(res.body.newThisWeek).toBeGreaterThanOrEqual(1);
+    expect(res.body.recentActivity.length).toBeGreaterThanOrEqual(1);
+    expect(res.body.recentActivity[0].appName).toBeDefined();
+    expect(res.body.recentActivity[0].uploadedBy).toBeDefined();
+    expect(res.body.recentActivity[0].appIcon).toBeDefined();
+    expect(res.body.recentActivity[0].createdAt).toBeDefined();
   });
 });
 
@@ -517,25 +542,118 @@ describe('PUT /api/apps/:id', () => {
   });
 });
 
+// ─── Apps: Reorder ──────────────────────────────────────────────────────────
+
+let secondAppId;
+
+describe('PUT /api/apps/reorder', () => {
+  it('creates a second app for reorder test', async () => {
+    const res = await request(app)
+      .post('/api/apps/upload')
+      .set('Cookie', adminCookie)
+      .attach('appFile', Buffer.from(testHtml), 'second.html')
+      .field('name', 'Second App');
+    expect(res.status).toBe(201);
+    secondAppId = res.body.app.id;
+  });
+
+  it('rejects empty body', async () => {
+    const res = await request(app)
+      .put('/api/apps/reorder')
+      .set('Cookie', adminCookie)
+      .send({});
+    expect(res.status).toBe(400);
+  });
+
+  it('reorders apps', async () => {
+    const res = await request(app)
+      .put('/api/apps/reorder')
+      .set('Cookie', adminCookie)
+      .send({ appIds: [secondAppId, appId] });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+
+    // Verify order
+    const list = await request(app)
+      .get('/api/apps')
+      .set('Cookie', adminCookie);
+    const ids = list.body.apps.map(a => a.id);
+    expect(ids.indexOf(secondAppId)).toBeLessThan(ids.indexOf(appId));
+  });
+});
+
+// ─── Apps: Update file ──────────────────────────────────────────────────────
+
+describe('PUT /api/apps/:id/file', () => {
+  const updatedHtml = '<html><body><h1>Updated Version</h1></body></html>';
+
+  it('rejects unauthenticated', async () => {
+    const res = await request(app)
+      .put(`/api/apps/${appId}/file`)
+      .attach('appFile', Buffer.from(updatedHtml), 'updated.html');
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects non-owner non-admin', async () => {
+    const res = await request(app)
+      .put(`/api/apps/${appId}/file`)
+      .set('Cookie', memberCookie)
+      .attach('appFile', Buffer.from(updatedHtml), 'updated.html');
+    expect(res.status).toBe(403);
+  });
+
+  it('rejects missing file', async () => {
+    const res = await request(app)
+      .put(`/api/apps/${appId}/file`)
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(400);
+  });
+
+  it('updates app file successfully', async () => {
+    const res = await request(app)
+      .put(`/api/apps/${appId}/file`)
+      .set('Cookie', adminCookie)
+      .attach('appFile', Buffer.from(updatedHtml), 'updated.html');
+
+    expect(res.status).toBe(200);
+    expect(res.body.app.originalFilename).toBe('updated.html');
+    expect(res.body.app.fileSize).toBe(updatedHtml.length);
+  });
+
+  it('rejects non-html file', async () => {
+    const res = await request(app)
+      .put(`/api/apps/${appId}/file`)
+      .set('Cookie', adminCookie)
+      .attach('appFile', Buffer.from('console.log("hi")'), 'app.js');
+    expect(res.status).toBe(400);
+    expect(res.body.detected).toBeDefined();
+    expect(res.body.conversionPrompt).toBeDefined();
+  });
+
+  it('serves updated content in sandbox', async () => {
+    const res = await request(app)
+      .get(`/sandbox/${appId}`)
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('Updated Version');
+  });
+});
+
 // ─── Apps: Visibility (private) ─────────────────────────────────────────────
 
 let privateAppId;
 
 describe('App visibility', () => {
   it('admin uploads a private app', async () => {
-    const tmpFile = path.join(__dirname, 'private-app.html');
-    fs.writeFileSync(tmpFile, testHtml);
-
     const res = await request(app)
       .post('/api/apps/upload')
       .set('Cookie', adminCookie)
-      .attach('appFile', tmpFile)
+      .attach('appFile', Buffer.from(testHtml), 'private-app.html')
       .field('name', 'Private App')
       .field('visibility', 'private');
 
     expect(res.status).toBe(201);
     privateAppId = res.body.app.id;
-    fs.unlinkSync(tmpFile);
   });
 
   it('member cannot see private app', async () => {
@@ -657,18 +775,13 @@ describe('GET /sandbox/:appId', () => {
   let sandboxAppId;
 
   beforeAll(async () => {
-    // Upload an app for sandbox testing
-    const tmpFile = path.join(__dirname, 'sandbox-test.html');
-    fs.writeFileSync(tmpFile, '<html><body><h1>Sandbox Test</h1></body></html>');
-
     const res = await request(app)
       .post('/api/apps/upload')
       .set('Cookie', adminCookie)
-      .attach('appFile', tmpFile)
+      .attach('appFile', Buffer.from('<html><body><h1>Sandbox Test</h1></body></html>'), 'sandbox-test.html')
       .field('name', 'Sandbox App');
 
     sandboxAppId = res.body.app.id;
-    fs.unlinkSync(tmpFile);
   });
 
   it('returns 401 without auth', async () => {

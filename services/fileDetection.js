@@ -1,6 +1,5 @@
 // Detects uploaded file type and returns conversion prompts for non-HTML files
 const path = require('path');
-const fs = require('fs');
 
 const SUPPORTED_EXTENSIONS = ['.html', '.htm'];
 
@@ -225,27 +224,18 @@ Here is my file:\n\n`
   };
 }
 
-function validateHtmlFile(filePath) {
-  try {
-    const content = fs.readFileSync(filePath, 'utf-8');
-    const issues = [];
-    
-    // Check for basic HTML structure
-    if (!content.includes('<html') && !content.includes('<!DOCTYPE') && !content.includes('<!doctype')) {
-      // It might be a fragment — still usable but warn
-      issues.push('No HTML doctype or <html> tag found — the file may be an HTML fragment');
-    }
+function validateHtmlContent(content, fileSize) {
+  const issues = [];
 
-    // Check file size
-    const stats = fs.statSync(filePath);
-    if (stats.size > 10 * 1024 * 1024) {
-      issues.push('File is larger than 10MB — consider optimizing');
-    }
-
-    return { valid: true, issues };
-  } catch (err) {
-    return { valid: false, issues: ['Could not read file'] };
+  if (!content.includes('<html') && !content.includes('<!DOCTYPE') && !content.includes('<!doctype')) {
+    issues.push('No HTML doctype or <html> tag found — the file may be an HTML fragment');
   }
+
+  if (fileSize > 10 * 1024 * 1024) {
+    issues.push('File is larger than 10MB — consider optimizing');
+  }
+
+  return { valid: true, issues };
 }
 
-module.exports = { detectFileType, validateHtmlFile, SUPPORTED_EXTENSIONS };
+module.exports = { detectFileType, validateHtmlContent, SUPPORTED_EXTENSIONS };

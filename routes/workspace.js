@@ -1,32 +1,17 @@
 const express = require('express');
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
+const sharp = require('sharp');
 const pool = require('../config/db');
 const { auth, adminOnly, validateId } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Logo upload config
-const logoStorage = multer.diskStorage({
-  destination(req, file, cb) {
-    const uploadDir = path.join(process.env.UPLOAD_DIR || './uploads', 'logos');
-    fs.mkdirSync(uploadDir, { recursive: true });
-    cb(null, uploadDir);
-  },
-  filename(req, file, cb) {
-    const ext = path.extname(file.originalname);
-    cb(null, `${req.user.workspaceId}${ext}`);
-  }
-});
-
+// Logo upload — memory storage, resized to max 200x200 then stored as base64
 const logoUpload = multer({
-  storage: logoStorage,
-  limits: { fileSize: 2 * 1024 * 1024 },
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 },
   fileFilter(req, file, cb) {
-    const allowed = ['.png', '.jpg', '.jpeg', '.svg', '.webp'];
-    const ext = path.extname(file.originalname).toLowerCase();
-    if (allowed.includes(ext)) {
+    if (file.mimetype.startsWith('image/')) {
       cb(null, true);
     } else {
       cb(new Error('Only image files are allowed'));
@@ -39,7 +24,7 @@ function formatWorkspace(ws) {
     id: ws.id,
     name: ws.name,
     slug: ws.slug,
-    logoPath: ws.logo_path,
+    logoData: ws.logo_data || null,
     primaryColor: ws.primary_color,
     accentColor: ws.accent_color
   };
@@ -81,38 +66,30 @@ router.put('/', auth, adminOnly, async (req, res) => {
   }
 });
 
-// POST /api/workspace/logo — upload logo (admin only)
+// POST /api/workspace/logo — upload logo, resize and store as base64 in DB
 router.post('/logo', auth, adminOnly, logoUpload.single('logo'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
 
   try {
-    const logoPath = `/api/workspace/logo/${req.user.workspaceId}`;
+    // Resize to max 200x200, convert to PNG, output as buffer
+    const resized = await sharp(req.file.buffer)
+      .resize(200, 200, { fit: 'inside', withoutEnlargement: true })
+      .png({ quality: 85 })
+      .toBuffer();
+
+    const base64 = `data:image/png;base64,${resized.toString('base64')}`;
+
     const result = await pool.query(
-      'UPDATE workspaces SET logo_path = $1, updated_at = NOW() WHERE id = $2 RETURNING *',
-      [logoPath, req.user.workspaceId]
+      'UPDATE workspaces SET logo_data = $1, updated_at = NOW() WHERE id = $2 RETURNING *',
+      [base64, req.user.workspaceId]
     );
     res.json({ workspace: formatWorkspace(result.rows[0]) });
   } catch (err) {
     console.error('Logo upload error:', err);
     res.status(500).json({ error: 'Failed to upload logo' });
   }
-});
-
-// GET /api/workspace/logo/:workspaceId — serve logo file
-router.get('/logo/:workspaceId', (req, res) => {
-  const logoDir = path.join(process.env.UPLOAD_DIR || './uploads', 'logos');
-  const wsId = path.basename(req.params.workspaceId); // prevent path traversal
-
-  for (const ext of ['.png', '.jpg', '.jpeg', '.svg', '.webp']) {
-    const filePath = path.join(logoDir, `${wsId}${ext}`);
-    if (fs.existsSync(filePath)) {
-      return res.sendFile(path.resolve(filePath));
-    }
-  }
-
-  res.status(404).json({ error: 'Logo not found' });
 });
 
 // GET /api/workspace/members

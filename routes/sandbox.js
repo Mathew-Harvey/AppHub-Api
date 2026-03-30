@@ -1,13 +1,11 @@
 const express = require('express');
-const path = require('path');
-const fs = require('fs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
 const { validateId } = require('../middleware/auth');
 
 const router = express.Router();
 
-// GET /sandbox/:appId — serve the HTML app inside an iframe
+// GET /sandbox/:appId — serve the HTML app inside an iframe (from DB)
 router.get('/:appId', validateId, async (req, res) => {
   try {
     const token = req.cookies?.token;
@@ -23,7 +21,7 @@ router.get('/:appId', validateId, async (req, res) => {
     }
 
     const result = await pool.query(
-      'SELECT * FROM apps WHERE id = $1 AND workspace_id = $2 AND is_active = true',
+      'SELECT id, uploaded_by, visibility, file_content FROM apps WHERE id = $1 AND workspace_id = $2 AND is_active = true',
       [req.params.appId, user.workspaceId]
     );
     if (result.rows.length === 0) {
@@ -47,19 +45,6 @@ router.get('/:appId', validateId, async (req, res) => {
       }
     }
 
-    // Resolve and validate file path
-    const uploadDir = path.resolve(process.env.UPLOAD_DIR || './uploads');
-    const filePath = path.resolve(path.join(uploadDir, app.file_path));
-    if (!filePath.startsWith(uploadDir)) {
-      return res.status(403).send('<html><body><h2>Access denied</h2></body></html>');
-    }
-
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).send('<html><body><h2>App file not found</h2></body></html>');
-    }
-
-    const htmlContent = fs.readFileSync(filePath, 'utf-8');
-
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'SAMEORIGIN');
@@ -76,7 +61,7 @@ router.get('/:appId', validateId, async (req, res) => {
       "form-action 'self'"
     ].join('; '));
 
-    res.send(htmlContent);
+    res.send(app.file_content);
   } catch (err) {
     console.error('Sandbox error:', err);
     res.status(500).send('<html><body><h2>Error loading app</h2></body></html>');
