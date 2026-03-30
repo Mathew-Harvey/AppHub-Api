@@ -4,7 +4,6 @@ const helmet = require('helmet');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
-const path = require('path');
 const fs = require('fs');
 
 const authRoutes = require('./routes/auth');
@@ -21,25 +20,20 @@ if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
 
-// Security
+// Security headers
 app.use(helmet({
   contentSecurityPolicy: false,
   crossOriginEmbedderPolicy: false
 }));
 
-// CORS — In dev, Vite proxy makes everything same-origin.
-// In production on Render, the static site (AppHub-Web) calls the API
-// service cross-origin, so we need credentials + explicit origin.
-const allowedOrigins = [
-  process.env.CLIENT_URL,
-  'http://localhost:5173',
-  'http://localhost:3001'
-].filter(Boolean);
+// CORS — exact origin matching (no startsWith to prevent subdomain bypass)
+const allowedOrigins = new Set(
+  [process.env.CLIENT_URL, 'http://localhost:5173', 'http://localhost:3001'].filter(Boolean)
+);
 
 app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.some(o => origin.startsWith(o))) {
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.has(origin)) {
       return callback(null, true);
     }
     callback(null, false);
@@ -48,19 +42,22 @@ app.use(cors({
 }));
 
 app.use(cookieParser());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '1mb' }));
 
 // Rate limiting
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
   message: { error: 'Too many attempts, please try again later' }
 });
 
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
   message: { error: 'Too many requests, please try again later' }
 });
 
@@ -72,19 +69,28 @@ app.get('/api/health', (req, res) => {
 // API routes
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/apps', apiLimiter, appRoutes);
-app.use('/api/workspace', workspaceRoutes);
-
-// Sandbox route (serves HTML apps in iframe)
+app.use('/api/workspace', apiLimiter, workspaceRoutes);
 app.use('/sandbox', sandboxRoutes);
 
-// Error handling
-app.use((err, req, res, next) => {
+// Global error handler (catches multer errors, JSON parse errors, etc.)
+app.use((err, req, res, _next) => {
+  if (err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(413).json({ error: 'File too large. Maximum size is 5MB.' });
+  }
+  if (err.message === 'Only HTML files are accepted' || err.message === 'Only image files are allowed') {
+    return res.status(400).json({ error: err.message });
+  }
   console.error('Unhandled error:', err);
   res.status(500).json({ error: 'Internal server error' });
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 AppHub API running on port ${PORT}`);
-  console.log(`   Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`   Client URL:  ${process.env.CLIENT_URL || 'not set'}`);
-});
+// Export app for testing, start server only when run directly
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`AppHub API running on port ${PORT}`);
+    console.log(`  Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`  Client URL:  ${process.env.CLIENT_URL || 'not set'}`);
+  });
+}
+
+module.exports = app;

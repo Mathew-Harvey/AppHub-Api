@@ -2,7 +2,7 @@ services:
   - type: web
     name: apphub-api
     runtime: node
-    buildCommand: npm install
+    buildCommand: npm install && npm test && npm run db:migrate
     startCommand: node index.js
     envVars:
       - key: NODE_ENV
