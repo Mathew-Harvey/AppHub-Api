@@ -66,6 +66,8 @@ const migrate = async () => {
         original_filename VARCHAR(255),
         file_size INTEGER,
         sort_order INTEGER DEFAULT 0,
+        pending_delete BOOLEAN DEFAULT false,
+        delete_requested_by UUID,
         visibility VARCHAR(20) DEFAULT 'team' CHECK (visibility IN ('private', 'team', 'specific')),
         is_active BOOLEAN DEFAULT true,
         created_at TIMESTAMP DEFAULT NOW(),
@@ -95,6 +97,8 @@ const migrate = async () => {
 
     // Idempotent migrations for existing databases
     await client.query('ALTER TABLE apps ADD COLUMN IF NOT EXISTS sort_order INTEGER DEFAULT 0');
+    await client.query('ALTER TABLE apps ADD COLUMN IF NOT EXISTS pending_delete BOOLEAN DEFAULT false');
+    await client.query('ALTER TABLE apps ADD COLUMN IF NOT EXISTS delete_requested_by UUID REFERENCES users(id)');
     await client.query('ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS logo_data TEXT');
     // Backfill sort_order from created_at for existing rows
     await client.query(`

@@ -683,12 +683,13 @@ describe('DELETE /api/apps/:id', () => {
     expect(res.status).toBe(403);
   });
 
-  it('owner can delete', async () => {
+  it('admin can delete immediately', async () => {
     const res = await request(app)
       .delete(`/api/apps/${appId}`)
       .set('Cookie', adminCookie);
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
+    expect(res.body.pending).toBe(false);
   });
 
   it('deleted app returns 404', async () => {
@@ -703,6 +704,96 @@ describe('DELETE /api/apps/:id', () => {
       .delete(`/api/apps/${appId}`)
       .set('Cookie', adminCookie);
     expect(res.status).toBe(404);
+  });
+});
+
+// ─── Apps: Pending Deletion (member flow) ───────────────────────────────────
+
+describe('Pending deletion workflow', () => {
+  let pendingAppId;
+  let tempMemberCookie;
+
+  beforeAll(async () => {
+    // Re-activate member for this test
+    await pool.query("UPDATE users SET is_active = true WHERE email = 'member@test.com'");
+    const login = await request(app)
+      .post('/api/auth/login')
+      .send({ email: 'member@test.com', password: 'password123' });
+    tempMemberCookie = login.headers['set-cookie'];
+
+    // Member uploads an app
+    const upload = await request(app)
+      .post('/api/apps/upload')
+      .set('Cookie', tempMemberCookie)
+      .attach('appFile', Buffer.from(testHtml), 'pending-test.html')
+      .field('name', 'Pending Test App');
+    pendingAppId = upload.body.app.id;
+  });
+
+  it('member delete creates pending deletion', async () => {
+    const res = await request(app)
+      .delete(`/api/apps/${pendingAppId}`)
+      .set('Cookie', tempMemberCookie);
+    expect(res.status).toBe(200);
+    expect(res.body.pending).toBe(true);
+  });
+
+  it('pending app is excluded from normal listing', async () => {
+    const res = await request(app)
+      .get('/api/apps')
+      .set('Cookie', tempMemberCookie);
+    const ids = res.body.apps.map(a => a.id);
+    expect(ids).not.toContain(pendingAppId);
+  });
+
+  it('admin can see pending deletions', async () => {
+    const res = await request(app)
+      .get('/api/apps/pending-deletions')
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(200);
+    expect(res.body.apps.length).toBeGreaterThanOrEqual(1);
+    const pending = res.body.apps.find(a => a.id === pendingAppId);
+    expect(pending).toBeDefined();
+    expect(pending.requestedBy).toBe('Member User');
+  });
+
+  it('member cannot see pending deletions', async () => {
+    const res = await request(app)
+      .get('/api/apps/pending-deletions')
+      .set('Cookie', tempMemberCookie);
+    expect(res.status).toBe(403);
+  });
+
+  it('admin can reject deletion', async () => {
+    const res = await request(app)
+      .post(`/api/apps/${pendingAppId}/reject-deletion`)
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(200);
+
+    // App reappears in listing
+    const list = await request(app)
+      .get('/api/apps')
+      .set('Cookie', tempMemberCookie);
+    const ids = list.body.apps.map(a => a.id);
+    expect(ids).toContain(pendingAppId);
+  });
+
+  it('re-request and approve deletion', async () => {
+    await request(app)
+      .delete(`/api/apps/${pendingAppId}`)
+      .set('Cookie', tempMemberCookie);
+
+    const res = await request(app)
+      .post(`/api/apps/${pendingAppId}/approve-deletion`)
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(200);
+
+    // App is now gone
+    const list = await request(app)
+      .get('/api/apps')
+      .set('Cookie', tempMemberCookie);
+    const ids = list.body.apps.map(a => a.id);
+    expect(ids).not.toContain(pendingAppId);
   });
 });
 

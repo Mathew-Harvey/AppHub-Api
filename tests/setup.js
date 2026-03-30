@@ -63,6 +63,8 @@ async function migrate() {
         original_filename VARCHAR(255),
         file_size INTEGER,
         sort_order INTEGER DEFAULT 0,
+        pending_delete BOOLEAN DEFAULT false,
+        delete_requested_by UUID,
         visibility VARCHAR(20) DEFAULT 'team' CHECK (visibility IN ('private', 'team', 'specific')),
         is_active BOOLEAN DEFAULT true,
         created_at TIMESTAMP DEFAULT NOW(),
