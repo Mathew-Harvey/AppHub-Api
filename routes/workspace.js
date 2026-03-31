@@ -96,7 +96,7 @@ router.post('/logo', auth, adminOnly, logoUpload.single('logo'), async (req, res
 router.get('/members', auth, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, email, display_name, role, is_active, created_at
+      `SELECT id, email, display_name, role, is_active, last_login_at, created_at
        FROM users
        WHERE workspace_id = $1
        ORDER BY role DESC, display_name ASC`,
@@ -109,6 +109,7 @@ router.get('/members', auth, async (req, res) => {
         displayName: u.display_name,
         role: u.role,
         isActive: u.is_active,
+        lastLoginAt: u.last_login_at,
         createdAt: u.created_at
       }))
     });

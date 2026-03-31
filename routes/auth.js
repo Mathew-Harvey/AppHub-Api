@@ -163,6 +163,8 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
+    await pool.query('UPDATE users SET last_login_at = NOW() WHERE id = $1', [row.id]);
+
     const profile = await getUserProfile(row.id);
     const token = signToken({ id: row.id, email: profile.email, workspace_id: profile.workspaceId, role: profile.role });
 
