@@ -154,6 +154,117 @@ router.post('/register', async (req, res) => {
   }
 });
 
+// POST /api/auth/check-email — called from the login page to determine next step
+router.post('/check-email', async (req, res) => {
+  const { email } = req.body;
+  if (!email) {
+    return res.status(400).json({ error: 'Email is required' });
+  }
+
+  const cleanEmail = email.toLowerCase().trim();
+
+  try {
+    const userResult = await pool.query(
+      'SELECT id FROM users WHERE email = $1 AND is_active = true',
+      [cleanEmail]
+    );
+    if (userResult.rows.length > 0) {
+      return res.json({ status: 'existing_user' });
+    }
+
+    const inviteResult = await pool.query(
+      `SELECT i.id AS invite_id, i.workspace_id, w.name AS workspace_name, w.logo_data
+       FROM invitations i
+       JOIN workspaces w ON i.workspace_id = w.id
+       WHERE i.email = $1 AND i.accepted = false`,
+      [cleanEmail]
+    );
+    if (inviteResult.rows.length > 0) {
+      return res.json({
+        status: 'pending_invite',
+        invites: inviteResult.rows.map(r => ({
+          inviteId: r.invite_id,
+          workspaceId: r.workspace_id,
+          workspaceName: r.workspace_name,
+          workspaceLogoData: r.logo_data || null
+        }))
+      });
+    }
+
+    res.json({ status: 'unknown' });
+  } catch (err) {
+    console.error('Check email error:', err);
+    res.status(500).json({ error: 'Failed to check email' });
+  }
+});
+
+// POST /api/auth/accept-invite — invited user sets password and joins workspace
+router.post('/accept-invite', async (req, res) => {
+  const { email, password, displayName, inviteId } = req.body;
+
+  if (!email || !password || !displayName || !inviteId) {
+    return res.status(400).json({ error: 'Email, password, display name, and invite ID are required' });
+  }
+  if (password.length < 8) {
+    return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  }
+
+  const cleanEmail = email.toLowerCase().trim();
+  const cleanName = displayName.trim();
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const inviteResult = await client.query(
+      `SELECT i.id, i.workspace_id, i.email, w.name AS workspace_name
+       FROM invitations i
+       JOIN workspaces w ON i.workspace_id = w.id
+       WHERE i.id = $1 AND i.accepted = false`,
+      [inviteId]
+    );
+    if (inviteResult.rows.length === 0) {
+      return res.status(400).json({ error: 'Invalid or already used invitation' });
+    }
+
+    const invite = inviteResult.rows[0];
+    if (invite.email !== cleanEmail) {
+      return res.status(400).json({ error: 'Email does not match the invitation' });
+    }
+
+    const existingUser = await client.query(
+      'SELECT id FROM users WHERE email = $1 AND workspace_id = $2',
+      [cleanEmail, invite.workspace_id]
+    );
+    if (existingUser.rows.length > 0) {
+      return res.status(400).json({ error: 'An account with this email already exists in this workspace' });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const userResult = await client.query(
+      'INSERT INTO users (workspace_id, email, password_hash, display_name, role) VALUES ($1, $2, $3, $4, $5) RETURNING id, email, display_name, role, workspace_id',
+      [invite.workspace_id, cleanEmail, passwordHash, cleanName, 'member']
+    );
+
+    await client.query('UPDATE invitations SET accepted = true WHERE id = $1', [inviteId]);
+
+    await client.query('COMMIT');
+
+    const user = userResult.rows[0];
+    const token = signToken(user);
+    const profile = await getUserProfile(user.id);
+
+    res.cookie('token', token, getCookieOptions());
+    res.status(201).json({ user: profile });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Accept invite error:', err);
+    res.status(500).json({ error: 'Failed to accept invitation' });
+  } finally {
+    client.release();
+  }
+});
+
 // POST /api/auth/login
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;

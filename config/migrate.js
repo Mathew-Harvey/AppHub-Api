@@ -151,8 +151,14 @@ const migrate = async () => {
     await client.query('ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS stripe_customer_id VARCHAR(255)');
     await client.query('ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS stripe_subscription_id VARCHAR(255)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_workspaces_stripe_customer ON workspaces(stripe_customer_id)');
-    // Drop NOT NULL on old file_path column (no longer used, file_content replaces it)
-    await client.query('ALTER TABLE apps ALTER COLUMN file_path DROP NOT NULL');
+    // Drop NOT NULL on old file_path column if it exists (no longer used, file_content replaces it)
+    await client.query(`
+      DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'apps' AND column_name = 'file_path') THEN
+          ALTER TABLE apps ALTER COLUMN file_path DROP NOT NULL;
+        END IF;
+      END $$
+    `);
 
     // Demo apps flag — demo apps are seeded on workspace creation and excluded from plan limits
     await client.query('ALTER TABLE apps ADD COLUMN IF NOT EXISTS is_demo BOOLEAN DEFAULT false');
