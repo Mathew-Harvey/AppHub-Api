@@ -360,6 +360,17 @@ describe('PUT /api/workspace', () => {
     expect(res.body.workspace.primaryColor).toBe('#ff0000');
     expect(res.body.workspace.accentColor).toBe('#00ff00');
   });
+
+  it('updates light mode branding colors', async () => {
+    const res = await request(app)
+      .put('/api/workspace')
+      .set('Cookie', adminCookie)
+      .send({ primaryColorLight: '#fafafa', accentColorLight: '#cc3344' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.workspace.primaryColorLight).toBe('#fafafa');
+    expect(res.body.workspace.accentColorLight).toBe('#cc3344');
+  });
 });
 
 // ─── Workspace: Members ─────────────────────────────────────────────────────
@@ -577,6 +588,28 @@ describe('POST /api/apps/convert', () => {
       .attach('appFile', Buffer.from('const x = 1;'), 'app.js');
     expect(res.status).toBe(403);
     expect(res.body.error).toBe('upgrade_required');
+  });
+
+  it('rejects when rate limit exceeded (pro plan)', async () => {
+    // Temporarily set plan to pro and max out conversions
+    await pool.query("UPDATE workspaces SET plan = 'pro', ai_conversions_used = 999 WHERE slug = 'test-workspace'");
+
+    const res = await request(app)
+      .post('/api/apps/convert')
+      .set('Cookie', adminCookie)
+      .attach('appFile', Buffer.from('const x = 1;'), 'app.js');
+    expect(res.status).toBe(429);
+    expect(res.body.error).toMatch(/limit/i);
+
+    // Reset
+    await pool.query("UPDATE workspaces SET plan = 'free', ai_conversions_used = 0 WHERE slug = 'test-workspace'");
+  });
+
+  it('poll endpoint returns 404 for unknown job', async () => {
+    const res = await request(app)
+      .get('/api/apps/convert/nonexistent-job-id')
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(404);
   });
 });
 

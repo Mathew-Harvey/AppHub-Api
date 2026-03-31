@@ -19,7 +19,11 @@ async function migrate() {
         logo_data TEXT,
         primary_color VARCHAR(7) DEFAULT '#1a1a2e',
         accent_color VARCHAR(7) DEFAULT '#e94560',
+        primary_color_light VARCHAR(7) DEFAULT '#ffffff',
+        accent_color_light VARCHAR(7) DEFAULT '#d63851',
         plan VARCHAR(20) DEFAULT 'free',
+        ai_conversions_used INTEGER DEFAULT 0,
+        ai_conversions_reset_at TIMESTAMP DEFAULT NOW(),
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
       )
