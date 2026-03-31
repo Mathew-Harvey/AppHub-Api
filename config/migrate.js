@@ -34,6 +34,8 @@ const migrate = async () => {
         display_name VARCHAR(255) NOT NULL,
         role VARCHAR(20) DEFAULT 'member' CHECK (role IN ('admin', 'member')),
         is_active BOOLEAN DEFAULT true,
+        reset_token VARCHAR(64),
+        reset_token_expires TIMESTAMP,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW(),
         UNIQUE(email, workspace_id)
@@ -101,6 +103,8 @@ const migrate = async () => {
     await client.query('ALTER TABLE apps ADD COLUMN IF NOT EXISTS pending_delete BOOLEAN DEFAULT false');
     await client.query('ALTER TABLE apps ADD COLUMN IF NOT EXISTS delete_requested_by UUID REFERENCES users(id)');
     await client.query('ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS logo_data TEXT');
+    await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token VARCHAR(64)');
+    await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMP');
     // Drop NOT NULL on old file_path column (no longer used, file_content replaces it)
     await client.query('ALTER TABLE apps ALTER COLUMN file_path DROP NOT NULL');
 

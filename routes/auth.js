@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
@@ -25,7 +26,6 @@ function signToken(user) {
   );
 }
 
-// Fetch full user profile with workspace details (shared by register, login, me)
 async function getUserProfile(userId) {
   const result = await pool.query(
     `SELECT u.id, u.email, u.display_name, u.role, u.workspace_id,
@@ -84,6 +84,10 @@ router.post('/register', async (req, res) => {
       );
       if (inviteResult.rows.length === 0) {
         return res.status(400).json({ error: 'Invalid or already used invitation' });
+      }
+      // Enforce: registering email must match the invited email
+      if (inviteResult.rows[0].email !== cleanEmail) {
+        return res.status(400).json({ error: 'This invitation was sent to a different email address' });
       }
       workspaceId = inviteResult.rows[0].workspace_id;
       await client.query('UPDATE invitations SET accepted = true WHERE id = $1', [inviteCode]);
@@ -188,6 +192,136 @@ router.get('/me', auth, async (req, res) => {
   } catch (err) {
     console.error('Profile error:', err);
     res.status(500).json({ error: 'Failed to get profile' });
+  }
+});
+
+// POST /api/auth/change-password — authenticated user changes their own password
+router.post('/change-password', auth, async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'Current password and new password are required' });
+  }
+  if (newPassword.length < 8) {
+    return res.status(400).json({ error: 'New password must be at least 8 characters' });
+  }
+
+  try {
+    const result = await pool.query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const valid = await bcrypt.compare(currentPassword, result.rows[0].password_hash);
+    if (!valid) {
+      return res.status(401).json({ error: 'Current password is incorrect' });
+    }
+
+    const hash = await bcrypt.hash(newPassword, 12);
+    await pool.query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [hash, req.user.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Change password error:', err);
+    res.status(500).json({ error: 'Failed to change password' });
+  }
+});
+
+// POST /api/auth/request-reset — generate a password reset token (no email sent — returns token for admin to share)
+router.post('/request-reset', async (req, res) => {
+  const { email } = req.body;
+  if (!email) {
+    return res.status(400).json({ error: 'Email is required' });
+  }
+
+  try {
+    const result = await pool.query(
+      'SELECT id FROM users WHERE email = $1 AND is_active = true',
+      [email.toLowerCase().trim()]
+    );
+    // Always return success to prevent email enumeration
+    if (result.rows.length === 0) {
+      return res.json({ ok: true });
+    }
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+
+    await pool.query(
+      'UPDATE users SET reset_token = $1, reset_token_expires = $2 WHERE id = $3',
+      [token, expiresAt, result.rows[0].id]
+    );
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Request reset error:', err);
+    res.status(500).json({ error: 'Failed to request reset' });
+  }
+});
+
+// POST /api/auth/reset-password — use token to set new password
+router.post('/reset-password', async (req, res) => {
+  const { token, newPassword } = req.body;
+  if (!token || !newPassword) {
+    return res.status(400).json({ error: 'Token and new password are required' });
+  }
+  if (newPassword.length < 8) {
+    return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  }
+
+  try {
+    const result = await pool.query(
+      'SELECT id FROM users WHERE reset_token = $1 AND reset_token_expires > NOW() AND is_active = true',
+      [token]
+    );
+    if (result.rows.length === 0) {
+      return res.status(400).json({ error: 'Invalid or expired reset link' });
+    }
+
+    const hash = await bcrypt.hash(newPassword, 12);
+    await pool.query(
+      'UPDATE users SET password_hash = $1, reset_token = NULL, reset_token_expires = NULL, updated_at = NOW() WHERE id = $2',
+      [hash, result.rows[0].id]
+    );
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Reset password error:', err);
+    res.status(500).json({ error: 'Failed to reset password' });
+  }
+});
+
+// POST /api/auth/admin-reset — admin generates a reset link for a user
+router.post('/admin-reset', auth, async (req, res) => {
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+
+  const { userId } = req.body;
+  if (!userId) {
+    return res.status(400).json({ error: 'userId is required' });
+  }
+
+  try {
+    const member = await pool.query(
+      'SELECT id, email FROM users WHERE id = $1 AND workspace_id = $2 AND is_active = true',
+      [userId, req.user.workspaceId]
+    );
+    if (member.rows.length === 0) {
+      return res.status(404).json({ error: 'Member not found' });
+    }
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+
+    await pool.query(
+      'UPDATE users SET reset_token = $1, reset_token_expires = $2 WHERE id = $3',
+      [token, expiresAt, userId]
+    );
+
+    const resetLink = `${process.env.CLIENT_URL || 'http://localhost:5173'}/reset-password?token=${token}`;
+    res.json({ resetLink, email: member.rows[0].email });
+  } catch (err) {
+    console.error('Admin reset error:', err);
+    res.status(500).json({ error: 'Failed to generate reset link' });
   }
 });
 
