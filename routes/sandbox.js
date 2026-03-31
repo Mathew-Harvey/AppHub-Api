@@ -51,19 +51,10 @@ router.get('/:appId', validateId, async (req, res) => {
 
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
     res.setHeader('Referrer-Policy', 'no-referrer');
-    res.setHeader('Content-Security-Policy', [
-      "default-src 'self' https: data: blob:",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com",
-      "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://fonts.googleapis.com",
-      "font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com data:",
-      "img-src 'self' https: data: blob:",
-      "connect-src 'self' https:",
-      "frame-ancestors 'self'",
-      "base-uri 'self'",
-      "form-action 'self'"
-    ].join('; '));
+    // No restrictive CSP — user-uploaded apps need full access to external
+    // resources (CDNs, APIs, audio, images). The iframe sandbox attribute
+    // is the security boundary, not CSP.
 
     res.send(app.file_content);
   } catch (err) {
