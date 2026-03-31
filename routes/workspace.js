@@ -26,7 +26,12 @@ function formatWorkspace(ws) {
     slug: ws.slug,
     logoData: ws.logo_data || null,
     primaryColor: ws.primary_color,
-    accentColor: ws.accent_color
+    accentColor: ws.accent_color,
+    primaryColorLight: ws.primary_color_light || '#ffffff',
+    accentColorLight: ws.accent_color_light || '#d63851',
+    plan: ws.plan || 'free',
+    aiConversionsUsed: ws.ai_conversions_used || 0,
+    aiConversionsResetAt: ws.ai_conversions_reset_at
   };
 }
 
@@ -46,7 +51,7 @@ router.get('/', auth, async (req, res) => {
 
 // PUT /api/workspace — update branding (admin only)
 router.put('/', auth, adminOnly, async (req, res) => {
-  const { name, primaryColor, accentColor } = req.body;
+  const { name, primaryColor, accentColor, primaryColorLight, accentColorLight } = req.body;
 
   try {
     const result = await pool.query(
@@ -54,10 +59,12 @@ router.put('/', auth, adminOnly, async (req, res) => {
         name = COALESCE($1, name),
         primary_color = COALESCE($2, primary_color),
         accent_color = COALESCE($3, accent_color),
+        primary_color_light = COALESCE($4, primary_color_light),
+        accent_color_light = COALESCE($5, accent_color_light),
         updated_at = NOW()
-       WHERE id = $4
+       WHERE id = $6
        RETURNING *`,
-      [name?.trim() || null, primaryColor || null, accentColor || null, req.user.workspaceId]
+      [name?.trim() || null, primaryColor || null, accentColor || null, primaryColorLight || null, accentColorLight || null, req.user.workspaceId]
     );
     res.json({ workspace: formatWorkspace(result.rows[0]) });
   } catch (err) {

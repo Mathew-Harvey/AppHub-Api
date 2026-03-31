@@ -19,6 +19,11 @@ const migrate = async () => {
         logo_data TEXT,
         primary_color VARCHAR(7) DEFAULT '#1a1a2e',
         accent_color VARCHAR(7) DEFAULT '#e94560',
+        primary_color_light VARCHAR(7) DEFAULT '#ffffff',
+        accent_color_light VARCHAR(7) DEFAULT '#d63851',
+        plan VARCHAR(20) DEFAULT 'free',
+        ai_conversions_used INTEGER DEFAULT 0,
+        ai_conversions_reset_at TIMESTAMP DEFAULT NOW(),
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
       )
@@ -107,6 +112,11 @@ const migrate = async () => {
     await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token VARCHAR(64)');
     await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expires TIMESTAMP');
     await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP');
+    await client.query("ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS plan VARCHAR(20) DEFAULT 'free'");
+    await client.query("ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS primary_color_light VARCHAR(7) DEFAULT '#ffffff'");
+    await client.query("ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS accent_color_light VARCHAR(7) DEFAULT '#d63851'");
+    await client.query('ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS ai_conversions_used INTEGER DEFAULT 0');
+    await client.query('ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS ai_conversions_reset_at TIMESTAMP DEFAULT NOW()');
     // Drop NOT NULL on old file_path column (no longer used, file_content replaces it)
     await client.query('ALTER TABLE apps ALTER COLUMN file_path DROP NOT NULL');
 

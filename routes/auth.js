@@ -30,7 +30,8 @@ async function getUserProfile(userId) {
   const result = await pool.query(
     `SELECT u.id, u.email, u.display_name, u.role, u.workspace_id,
             w.name AS workspace_name, w.slug AS workspace_slug,
-            w.logo_data, w.primary_color, w.accent_color
+            w.logo_data, w.primary_color, w.accent_color,
+            w.primary_color_light, w.accent_color_light, w.plan
      FROM users u
      JOIN workspaces w ON u.workspace_id = w.id
      WHERE u.id = $1 AND u.is_active = true`,
@@ -51,7 +52,10 @@ async function getUserProfile(userId) {
       slug: row.workspace_slug,
       logoData: row.logo_data,
       primaryColor: row.primary_color,
-      accentColor: row.accent_color
+      accentColor: row.accent_color,
+      primaryColorLight: row.primary_color_light || '#ffffff',
+      accentColorLight: row.accent_color_light || '#d63851',
+      plan: row.plan || 'free'
     }
   };
 }

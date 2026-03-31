@@ -4,6 +4,8 @@ const rateLimit = require('express-rate-limit');
 const pool = require('../config/db');
 const { auth, adminOnly, validateId } = require('../middleware/auth');
 const { detectFileType, validateHtmlContent } = require('../services/fileDetection');
+const crypto = require('crypto');
+const { convertToHtml, checkConversionQuota, incrementConversionCount } = require('../services/aiConvert');
 
 const router = express.Router();
 
@@ -93,6 +95,97 @@ router.post('/check', auth, (req, res) => {
     return res.status(400).json({ error: 'Filename is required' });
   }
   res.json(detectFileType(filename));
+});
+
+// In-memory job store for AI conversions (survives within process lifetime)
+const conversionJobs = new Map();
+
+// Clean up old jobs every 10 minutes (skip in test)
+if (process.env.NODE_ENV !== 'test') setInterval(() => {
+  const cutoff = Date.now() - 30 * 60 * 1000;
+  for (const [id, job] of conversionJobs) {
+    if (job.createdAt < cutoff) conversionJobs.delete(id);
+  }
+}, 10 * 60 * 1000);
+
+// POST /api/apps/convert — start AI conversion job (pro only, rate limited)
+router.post('/convert', auth, upload.single('appFile'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    const ws = await pool.query('SELECT plan FROM workspaces WHERE id = $1', [req.user.workspaceId]);
+    if (ws.rows.length === 0 || ws.rows[0].plan !== 'pro') {
+      return res.status(403).json({
+        error: 'upgrade_required',
+        message: 'AI conversion requires a Pro subscription'
+      });
+    }
+
+    const quota = await checkConversionQuota(pool, req.user.workspaceId);
+    if (!quota.allowed) {
+      return res.status(429).json({
+        error: 'Monthly conversion limit reached',
+        used: quota.used,
+        limit: quota.limit
+      });
+    }
+
+    if (!process.env.ANTHROPIC_API_KEY) {
+      return res.status(500).json({ error: 'AI conversion is not configured' });
+    }
+
+    // Create job, return immediately
+    const jobId = crypto.randomUUID();
+    const job = {
+      id: jobId,
+      status: 'processing',
+      html: null,
+      error: null,
+      originalFilename: req.file.originalname,
+      createdAt: Date.now()
+    };
+    conversionJobs.set(jobId, job);
+
+    // Run conversion in background
+    convertToHtml(req.file.originalname, req.file.buffer)
+      .then(async (html) => {
+        job.status = 'done';
+        job.html = html;
+        await incrementConversionCount(pool, req.user.workspaceId);
+      })
+      .catch((err) => {
+        console.error('Convert error:', err);
+        job.status = 'failed';
+        job.error = 'AI conversion failed. Please try again or convert manually.';
+      });
+
+    res.json({ jobId });
+  } catch (err) {
+    console.error('Convert error:', err);
+    res.status(500).json({ error: 'Failed to start conversion' });
+  }
+});
+
+// GET /api/apps/convert/:jobId — poll conversion status
+router.get('/convert/:jobId', auth, (req, res) => {
+  const job = conversionJobs.get(req.params.jobId);
+  if (!job) {
+    return res.status(404).json({ error: 'Conversion job not found' });
+  }
+
+  if (job.status === 'processing') {
+    return res.json({ status: 'processing' });
+  }
+  if (job.status === 'failed') {
+    conversionJobs.delete(req.params.jobId);
+    return res.json({ status: 'failed', error: job.error });
+  }
+
+  // Done — return HTML and clean up
+  conversionJobs.delete(req.params.jobId);
+  res.json({ status: 'done', html: job.html, originalFilename: job.originalFilename });
 });
 
 // PUT /api/apps/reorder
