@@ -168,6 +168,172 @@ describe('POST /api/auth/logout', () => {
   });
 });
 
+// ─── Auth: Change password ──────────────────────────────────────────────────
+
+describe('POST /api/auth/change-password', () => {
+  it('rejects without auth', async () => {
+    const res = await request(app)
+      .post('/api/auth/change-password')
+      .send({ currentPassword: 'password123', newPassword: 'newpass123' });
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects wrong current password', async () => {
+    const res = await request(app)
+      .post('/api/auth/change-password')
+      .set('Cookie', adminCookie)
+      .send({ currentPassword: 'wrongpass', newPassword: 'newpass123' });
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects short new password', async () => {
+    const res = await request(app)
+      .post('/api/auth/change-password')
+      .set('Cookie', adminCookie)
+      .send({ currentPassword: 'password123', newPassword: 'short' });
+    expect(res.status).toBe(400);
+  });
+
+  it('changes password successfully', async () => {
+    const res = await request(app)
+      .post('/api/auth/change-password')
+      .set('Cookie', adminCookie)
+      .send({ currentPassword: 'password123', newPassword: 'newpassword123' });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+
+    // Verify can login with new password
+    const login = await request(app)
+      .post('/api/auth/login')
+      .send({ email: 'admin@test.com', password: 'newpassword123' });
+    expect(login.status).toBe(200);
+    adminCookie = login.headers['set-cookie'];
+
+    // Change back for other tests
+    await request(app)
+      .post('/api/auth/change-password')
+      .set('Cookie', adminCookie)
+      .send({ currentPassword: 'newpassword123', newPassword: 'password123' });
+    const relogin = await request(app)
+      .post('/api/auth/login')
+      .send({ email: 'admin@test.com', password: 'password123' });
+    adminCookie = relogin.headers['set-cookie'];
+  });
+});
+
+// ─── Auth: Password reset flow ─────────────────────────────────────────────
+
+describe('Password reset flow', () => {
+  it('request-reset always returns ok (no email enumeration)', async () => {
+    const res = await request(app)
+      .post('/api/auth/request-reset')
+      .send({ email: 'nonexistent@test.com' });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+  });
+
+  it('request-reset for existing user returns ok', async () => {
+    const res = await request(app)
+      .post('/api/auth/request-reset')
+      .send({ email: 'admin@test.com' });
+    expect(res.status).toBe(200);
+  });
+
+  it('reset-password rejects invalid token', async () => {
+    const res = await request(app)
+      .post('/api/auth/reset-password')
+      .send({ token: 'invalidtoken', newPassword: 'newpass123' });
+    expect(res.status).toBe(400);
+  });
+
+  it('admin-reset generates a reset link', async () => {
+    // First we need a member to reset — get the member's ID
+    const members = await request(app)
+      .get('/api/workspace/members')
+      .set('Cookie', adminCookie);
+    const member = members.body.members.find(m => m.email === 'admin@test.com');
+
+    const res = await request(app)
+      .post('/api/auth/admin-reset')
+      .set('Cookie', adminCookie)
+      .send({ userId: member.id });
+    expect(res.status).toBe(200);
+    expect(res.body.resetLink).toContain('/reset-password?token=');
+    expect(res.body.email).toBe('admin@test.com');
+
+    // Extract token and use it
+    const token = new URL(res.body.resetLink).searchParams.get('token');
+    const reset = await request(app)
+      .post('/api/auth/reset-password')
+      .send({ token, newPassword: 'resetpass123' });
+    expect(reset.status).toBe(200);
+
+    // Login with new password
+    const login = await request(app)
+      .post('/api/auth/login')
+      .send({ email: 'admin@test.com', password: 'resetpass123' });
+    expect(login.status).toBe(200);
+    adminCookie = login.headers['set-cookie'];
+
+    // Restore original password
+    await request(app)
+      .post('/api/auth/change-password')
+      .set('Cookie', adminCookie)
+      .send({ currentPassword: 'resetpass123', newPassword: 'password123' });
+    const relogin = await request(app)
+      .post('/api/auth/login')
+      .send({ email: 'admin@test.com', password: 'password123' });
+    adminCookie = relogin.headers['set-cookie'];
+  });
+
+  it('admin-reset rejects non-admin', async () => {
+    const res = await request(app)
+      .post('/api/auth/admin-reset')
+      .send({ userId: 'some-id' });
+    expect(res.status).toBe(401);
+  });
+});
+
+// ─── Auth: Invite email enforcement ─────────────────────────────────────────
+
+describe('Invite email enforcement', () => {
+  let testInviteId;
+
+  it('creates invitation for specific email', async () => {
+    const res = await request(app)
+      .post('/api/workspace/invite')
+      .set('Cookie', adminCookie)
+      .send({ email: 'specific@test.com' });
+    expect(res.status).toBe(201);
+    testInviteId = res.body.invitation.id;
+  });
+
+  it('rejects registration with wrong email', async () => {
+    const res = await request(app)
+      .post('/api/auth/register')
+      .send({
+        email: 'wrong@test.com',
+        password: 'password123',
+        displayName: 'Wrong User',
+        inviteCode: testInviteId
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/different email/i);
+  });
+
+  it('accepts registration with correct email', async () => {
+    const res = await request(app)
+      .post('/api/auth/register')
+      .send({
+        email: 'specific@test.com',
+        password: 'password123',
+        displayName: 'Specific User',
+        inviteCode: testInviteId
+      });
+    expect(res.status).toBe(201);
+  });
+});
+
 // ─── Workspace ──────────────────────────────────────────────────────────────
 
 describe('GET /api/workspace', () => {
@@ -204,9 +370,10 @@ describe('GET /api/workspace/members', () => {
       .set('Cookie', adminCookie);
 
     expect(res.status).toBe(200);
-    expect(res.body.members).toHaveLength(1);
-    expect(res.body.members[0].email).toBe('admin@test.com');
-    expect(res.body.members[0].displayName).toBe('Admin User');
+    expect(res.body.members.length).toBeGreaterThanOrEqual(1);
+    const admin = res.body.members.find(m => m.email === 'admin@test.com');
+    expect(admin).toBeDefined();
+    expect(admin.displayName).toBe('Admin User');
   });
 });
 

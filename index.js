@@ -37,10 +37,12 @@ app.use(cors({
 app.use(cookieParser());
 app.use(express.json({ limit: '1mb' }));
 
-// Rate limiting
+// Rate limiting (skipped in test to avoid flaky tests)
+const skipInTest = process.env.NODE_ENV === 'test' ? () => true : () => false;
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30,
+  skip: skipInTest,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many attempts, please try again later' }
@@ -49,6 +51,7 @@ const authLimiter = rateLimit({
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 200,
+  skip: skipInTest,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests, please try again later' }

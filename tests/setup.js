@@ -33,6 +33,8 @@ async function migrate() {
         display_name VARCHAR(255) NOT NULL,
         role VARCHAR(20) DEFAULT 'member' CHECK (role IN ('admin', 'member')),
         is_active BOOLEAN DEFAULT true,
+        reset_token VARCHAR(64),
+        reset_token_expires TIMESTAMP,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW(),
         UNIQUE(email, workspace_id)
