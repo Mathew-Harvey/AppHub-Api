@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>File → HTML Converter</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a0f;
+      --surface: #12121a;
+      --surface-2: #1a1a26;
+      --border: #2a2a3a;
+      --border-hover: #3a3a5a;
+      --text: #e8e8f0;
+      --text-muted: #8888a0;
+      --accent: #6c5ce7;
+      --accent-hover: #7c6cf7;
+      --accent-glow: rgba(108, 92, 231, 0.15);
+      --success: #00d2a0;
+      --warning: #f0a030;
+      --danger: #e74c3c;
+      --radius: 12px;
+      --radius-sm: 8px;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.6;
+    }
+
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
+
+    header h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    header h1 span { color: var(--accent); }
+
+    header p {
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+      font-size: 0.95rem;
+    }
+
+    /* ── Drop Zone ── */
+    .dropzone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 3rem 2rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      position: relative;
+      background: var(--surface);
+    }
+
+    .dropzone:hover, .dropzone.dragover {
+      border-color: var(--accent);
+      background: var(--accent-glow);
+    }
+
+    .dropzone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    .dropzone-icon {
+      font-size: 2.5rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .dropzone-label {
+      font-size: 1rem;
+      font-weight: 500;
+    }
+
+    .dropzone-hint {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      margin-top: 0.4rem;
+    }
+
+    /* ── File List ── */
+    .file-list {
+      margin-top: 1rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .file-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 99px;
+      padding: 0.35rem 0.75rem;
+      font-size: 0.82rem;
+    }
+
+    .file-chip .size {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+    }
+
+    .file-chip .remove {
+      cursor: pointer;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      line-height: 1;
+      transition: color 0.15s;
+    }
+
+    .file-chip .remove:hover { color: var(--danger); }
+
+    /* ── Actions ── */
+    .actions {
+      margin-top: 1.5rem;
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.65rem 1.5rem;
+      border-radius: var(--radius-sm);
+      border: none;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, opacity 0.2s, transform 0.1s;
+    }
+
+    .btn:active { transform: scale(0.98); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-muted);
+      border: 1px solid var(--border);
+    }
+
+    .btn-ghost:hover:not(:disabled) {
+      border-color: var(--border-hover);
+      color: var(--text);
+    }
+
+    /* ── Loading ── */
+    .loading-state {
+      display: none;
+      margin-top: 2rem;
+      text-align: center;
+    }
+
+    .loading-state.active { display: block; }
+
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 1rem;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .loading-state p {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    /* ── Results ── */
+    .result-panel {
+      display: none;
+      margin-top: 2rem;
+    }
+
+    .result-panel.active { display: block; }
+
+    .warnings-bar {
+      margin-bottom: 1rem;
+    }
+
+    .warning-banner {
+      background: rgba(240, 160, 48, 0.1);
+      border: 1px solid rgba(240, 160, 48, 0.3);
+      border-radius: var(--radius-sm);
+      padding: 0.6rem 1rem;
+      font-size: 0.85rem;
+      color: var(--warning);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 0.5rem;
+    }
+
+    .warning-banner .dismiss {
+      cursor: pointer;
+      opacity: 0.7;
+      font-size: 1rem;
+    }
+
+    .warning-banner .dismiss:hover { opacity: 1; }
+
+    .meta-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      padding: 0.75rem 1rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      margin-bottom: 1rem;
+      font-size: 0.82rem;
+    }
+
+    .meta-item {
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+
+    .meta-item .label { color: var(--text-muted); }
+    .meta-item .value { font-weight: 600; }
+
+    .result-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .preview-frame {
+      width: 100%;
+      height: 500px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: #fff;
+    }
+
+    .source-view {
+      display: none;
+      margin-top: 1rem;
+    }
+
+    .source-view.active { display: block; }
+
+    .source-view pre {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 1rem;
+      overflow-x: auto;
+      max-height: 500px;
+      overflow-y: auto;
+      font-size: 0.8rem;
+      line-height: 1.5;
+      tab-size: 2;
+    }
+
+    .source-view code {
+      color: var(--text);
+      font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+    }
+
+    /* ── Error State ── */
+    .error-state {
+      display: none;
+      margin-top: 2rem;
+      text-align: center;
+    }
+
+    .error-state.active { display: block; }
+
+    .error-box {
+      background: rgba(231, 76, 60, 0.08);
+      border: 1px solid rgba(231, 76, 60, 0.3);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+    }
+
+    .error-box h3 {
+      color: var(--danger);
+      font-size: 1rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .error-box p {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      margin-bottom: 0.75rem;
+    }
+
+    .error-list {
+      text-align: left;
+      list-style: none;
+      padding: 0;
+      margin: 0.5rem 0 1rem;
+    }
+
+    .error-list li {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      padding: 0.25rem 0;
+      padding-left: 1.2rem;
+      position: relative;
+    }
+
+    .error-list li::before {
+      content: '•';
+      position: absolute;
+      left: 0;
+      color: var(--danger);
+    }
+
+    /* ── History ── */
+    .history-section {
+      margin-top: 3rem;
+      border-top: 1px solid var(--border);
+      padding-top: 1.5rem;
+    }
+
+    .history-section h3 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin-bottom: 0.75rem;
+      color: var(--text-muted);
+    }
+
+    .history-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .history-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 0.6rem 0.75rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-size: 0.82rem;
+    }
+
+    .history-item .name { font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .history-item .time { color: var(--text-muted); white-space: nowrap; }
+
+    .history-item .btn { padding: 0.3rem 0.75rem; font-size: 0.78rem; }
+
+    .toast {
+      position: fixed;
+      bottom: 1.5rem;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 0.6rem 1.2rem;
+      font-size: 0.85rem;
+      opacity: 0;
+      transition: transform 0.3s, opacity 0.3s;
+      z-index: 100;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    @media (max-width: 600px) {
+      .container { padding: 1.25rem 1rem; }
+      .dropzone { padding: 2rem 1rem; }
+      .meta-bar { flex-direction: column; gap: 0.5rem; }
+      .preview-frame { height: 350px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>File <span>&rarr;</span> HTML Converter</h1>
+      <p>Upload frontend project files and get a single self-contained HTML file</p>
+    </header>
+
+    <!-- Upload -->
+    <div class="dropzone" id="dropzone">
+      <input type="file" id="fileInput" multiple accept=".zip,.jsx,.tsx,.vue,.svelte,.html,.htm,.css,.js,.ts,.json,.md,.py">
+      <div class="dropzone-icon">&#128230;</div>
+      <div class="dropzone-label">Drop files here or click to browse</div>
+      <div class="dropzone-hint">.zip, .jsx, .tsx, .vue, .svelte, .html, .css, .js, .ts, .json, .md</div>
+    </div>
+
+    <div class="file-list" id="fileList"></div>
+
+    <div class="actions">
+      <button class="btn btn-primary" id="convertBtn" disabled>Convert to HTML</button>
+      <button class="btn btn-ghost" id="clearBtn" style="display:none;">Clear</button>
+    </div>
+
+    <!-- Loading -->
+    <div class="loading-state" id="loadingState">
+      <div class="spinner"></div>
+      <p>Converting&hellip; this may take 30&ndash;60 seconds for large projects.</p>
+    </div>
+
+    <!-- Error -->
+    <div class="error-state" id="errorState">
+      <div class="error-box">
+        <h3>Conversion Failed</h3>
+        <p id="errorMessage"></p>
+        <ul class="error-list" id="errorList"></ul>
+        <button class="btn btn-primary" id="retryBtn">Try Again</button>
+      </div>
+    </div>
+
+    <!-- Result -->
+    <div class="result-panel" id="resultPanel">
+      <div class="warnings-bar" id="warningsBar"></div>
+
+      <div class="meta-bar" id="metaBar"></div>
+
+      <div class="result-actions">
+        <button class="btn btn-primary" id="downloadBtn">&#8681; Download HTML</button>
+        <button class="btn btn-ghost" id="copyBtn">&#128203; Copy HTML</button>
+        <button class="btn btn-ghost" id="toggleSourceBtn">{ } View Source</button>
+      </div>
+
+      <iframe class="preview-frame" id="previewFrame" sandbox="allow-scripts allow-same-origin"></iframe>
+
+      <div class="source-view" id="sourceView">
+        <pre><code id="sourceCode"></code></pre>
+      </div>
+    </div>
+
+    <!-- History -->
+    <div class="history-section" id="historySection" style="display:none;">
+      <h3>Recent Conversions</h3>
+      <div class="history-list" id="historyList"></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const API_URL = window.location.origin + '/api/convert';
+    const MAX_HISTORY = 10;
+
+    const $ = id => document.getElementById(id);
+
+    const dropzone = $('dropzone');
+    const fileInput = $('fileInput');
+    const fileList = $('fileList');
+    const convertBtn = $('convertBtn');
+    const clearBtn = $('clearBtn');
+    const loadingState = $('loadingState');
+    const errorState = $('errorState');
+    const resultPanel = $('resultPanel');
+    const previewFrame = $('previewFrame');
+    const sourceCode = $('sourceCode');
+    const sourceView = $('sourceView');
+    const toast = $('toast');
+
+    let selectedFiles = [];
+    let currentResult = null;
+
+    // ── File Selection ──
+    fileInput.addEventListener('change', e => addFiles(Array.from(e.target.files)));
+
+    dropzone.addEventListener('dragover', e => {
+      e.preventDefault();
+      dropzone.classList.add('dragover');
+    });
+
+    dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+
+    dropzone.addEventListener('drop', e => {
+      e.preventDefault();
+      dropzone.classList.remove('dragover');
+      addFiles(Array.from(e.dataTransfer.files));
+    });
+
+    function addFiles(files) {
+      for (const f of files) {
+        if (!selectedFiles.some(s => s.name === f.name && s.size === f.size)) {
+          selectedFiles.push(f);
+        }
+      }
+      renderFileList();
+      fileInput.value = '';
+    }
+
+    function removeFile(index) {
+      selectedFiles.splice(index, 1);
+      renderFileList();
+    }
+
+    function renderFileList() {
+      fileList.innerHTML = '';
+      selectedFiles.forEach((f, i) => {
+        const chip = document.createElement('div');
+        chip.className = 'file-chip';
+        chip.innerHTML = `
+          <span>${esc(f.name)}</span>
+          <span class="size">(${formatSize(f.size)})</span>
+          <span class="remove" data-i="${i}">&times;</span>
+        `;
+        fileList.appendChild(chip);
+      });
+
+      fileList.querySelectorAll('.remove').forEach(el =>
+        el.addEventListener('click', () => removeFile(parseInt(el.dataset.i)))
+      );
+
+      convertBtn.disabled = selectedFiles.length === 0;
+      clearBtn.style.display = selectedFiles.length > 0 ? 'inline-flex' : 'none';
+    }
+
+    clearBtn.addEventListener('click', () => {
+      selectedFiles = [];
+      renderFileList();
+      hideAll();
+    });
+
+    // ── Convert ──
+    convertBtn.addEventListener('click', doConvert);
+    $('retryBtn').addEventListener('click', doConvert);
+
+    async function doConvert() {
+      if (selectedFiles.length === 0) return;
+
+      hideAll();
+      loadingState.classList.add('active');
+      convertBtn.disabled = true;
+
+      const formData = new FormData();
+      for (const f of selectedFiles) formData.append('file', f);
+
+      try {
+        const res = await fetch(API_URL, { method: 'POST', body: formData });
+        const data = await res.json();
+
+        loadingState.classList.remove('active');
+
+        if (!res.ok || !data.success) {
+          showError(data);
+          return;
+        }
+
+        currentResult = data;
+        showResult(data);
+        saveToHistory(data);
+      } catch (err) {
+        loadingState.classList.remove('active');
+        showError({ error: err.message || 'Network error — check your connection and try again.' });
+      } finally {
+        convertBtn.disabled = selectedFiles.length === 0;
+      }
+    }
+
+    // ── Result Display ──
+    function showResult(data) {
+      resultPanel.classList.add('active');
+
+      // Warnings
+      const bar = $('warningsBar');
+      bar.innerHTML = '';
+      if (data.warnings && data.warnings.length > 0) {
+        data.warnings.forEach(w => {
+          const div = document.createElement('div');
+          div.className = 'warning-banner';
+          div.innerHTML = `<span>${esc(w)}</span><span class="dismiss">&times;</span>`;
+          div.querySelector('.dismiss').addEventListener('click', () => div.remove());
+          bar.appendChild(div);
+        });
+      }
+
+      // Metadata
+      const m = data.metadata;
+      const tierLabel = m.tier_used === 1 ? '\u26A1 Fast' : '\uD83E\uDDE0 Deep';
+      $('metaBar').innerHTML = [
+        meta('Tier', tierLabel),
+        meta('Files', m.input_files),
+        meta('Output', formatSize(m.output_size_bytes)),
+        meta('Time', (m.processing_time_ms / 1000).toFixed(1) + 's'),
+        meta('Est. Cost', '$' + m.cost_estimate_usd.toFixed(4)),
+      ].join('');
+
+      // Preview
+      const blob = new Blob([data.html], { type: 'text/html' });
+      previewFrame.src = URL.createObjectURL(blob);
+
+      // Source
+      sourceCode.textContent = data.html;
+      sourceView.classList.remove('active');
+      $('toggleSourceBtn').textContent = '{ } View Source';
+    }
+
+    function showError(data) {
+      errorState.classList.add('active');
+      $('errorMessage').textContent = data.error || 'Unknown error';
+      const list = $('errorList');
+      list.innerHTML = '';
+
+      const errors = data.metadata?.tier1_errors || data.metadata?.tier2_errors || [];
+      errors.forEach(e => {
+        const li = document.createElement('li');
+        li.textContent = e;
+        list.appendChild(li);
+      });
+    }
+
+    function hideAll() {
+      loadingState.classList.remove('active');
+      errorState.classList.remove('active');
+      resultPanel.classList.remove('active');
+    }
+
+    // ── Result Actions ──
+    $('downloadBtn').addEventListener('click', () => {
+      if (!currentResult) return;
+      const name = selectedFiles[0]?.name?.replace(/\.[^.]+$/, '') || 'project';
+      const blob = new Blob([currentResult.html], { type: 'text/html' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = name + '-converted.html';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    });
+
+    $('copyBtn').addEventListener('click', async () => {
+      if (!currentResult) return;
+      try {
+        await navigator.clipboard.writeText(currentResult.html);
+        showToast('Copied to clipboard');
+      } catch {
+        showToast('Copy failed');
+      }
+    });
+
+    $('toggleSourceBtn').addEventListener('click', () => {
+      const active = sourceView.classList.toggle('active');
+      $('toggleSourceBtn').textContent = active ? '{ } Hide Source' : '{ } View Source';
+    });
+
+    // ── History ──
+    function getHistory() {
+      try { return JSON.parse(sessionStorage.getItem('convertHistory') || '[]'); }
+      catch { return []; }
+    }
+
+    function saveToHistory(data) {
+      const history = getHistory();
+      history.unshift({
+        name: selectedFiles.map(f => f.name).join(', '),
+        time: new Date().toISOString(),
+        html: data.html,
+        tier: data.metadata.tier_used,
+        size: data.metadata.output_size_bytes,
+      });
+      if (history.length > MAX_HISTORY) history.length = MAX_HISTORY;
+      sessionStorage.setItem('convertHistory', JSON.stringify(history));
+      renderHistory();
+    }
+
+    function renderHistory() {
+      const history = getHistory();
+      const section = $('historySection');
+      const list = $('historyList');
+
+      if (history.length === 0) {
+        section.style.display = 'none';
+        return;
+      }
+
+      section.style.display = 'block';
+      list.innerHTML = '';
+
+      history.forEach((item, i) => {
+        const div = document.createElement('div');
+        div.className = 'history-item';
+        div.innerHTML = `
+          <span class="name">${esc(item.name)}</span>
+          <span class="time">${timeAgo(item.time)}</span>
+          <button class="btn btn-ghost" data-i="${i}">Download</button>
+        `;
+        div.querySelector('button').addEventListener('click', () => {
+          const blob = new Blob([item.html], { type: 'text/html' });
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = (item.name.split(',')[0]?.trim()?.replace(/\.[^.]+$/, '') || 'project') + '-converted.html';
+          a.click();
+          URL.revokeObjectURL(a.href);
+        });
+        list.appendChild(div);
+      });
+    }
+
+    // ── Helpers ──
+    function meta(label, value) {
+      return `<div class="meta-item"><span class="label">${label}:</span><span class="value">${value}</span></div>`;
+    }
+
+    function formatSize(bytes) {
+      if (!bytes) return '0 B';
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    function timeAgo(iso) {
+      const diff = Date.now() - new Date(iso).getTime();
+      const mins = Math.floor(diff / 60000);
+      if (mins < 1) return 'just now';
+      if (mins < 60) return mins + 'm ago';
+      const hrs = Math.floor(mins / 60);
+      if (hrs < 24) return hrs + 'h ago';
+      return Math.floor(hrs / 24) + 'd ago';
+    }
+
+    function esc(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    function showToast(msg) {
+      toast.textContent = msg;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 2000);
+    }
+
+    renderHistory();
+  </script>
+</body>
+</html>

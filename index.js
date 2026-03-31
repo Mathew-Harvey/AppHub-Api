@@ -5,12 +5,14 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
 
+const path = require('path');
 const authRoutes = require('./routes/auth');
 const appRoutes = require('./routes/apps');
 const folderRoutes = require('./routes/folders');
 const workspaceRoutes = require('./routes/workspace');
 const sandboxRoutes = require('./routes/sandbox');
 const subscriptionRoutes = require('./routes/subscription');
+const convertRoutes = require('./routes/convert');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -75,7 +77,11 @@ app.use('/api/apps', apiLimiter, appRoutes);
 app.use('/api/folders', apiLimiter, folderRoutes);
 app.use('/api/workspace', apiLimiter, workspaceRoutes);
 app.use('/api/subscription', apiLimiter, subscriptionRoutes);
+app.use('/api/convert', convertRoutes);
 app.use('/sandbox', sandboxRoutes);
+
+// Serve the converter frontend
+app.use('/converter', express.static(path.join(__dirname, 'public', 'converter')));
 
 // Global error handler (catches multer errors, JSON parse errors, etc.)
 app.use((err, req, res, _next) => {

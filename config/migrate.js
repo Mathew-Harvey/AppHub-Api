@@ -164,6 +164,24 @@ const migrate = async () => {
     await client.query('ALTER TABLE apps ADD COLUMN IF NOT EXISTS is_demo BOOLEAN DEFAULT false');
     await client.query('CREATE INDEX IF NOT EXISTS idx_apps_is_demo ON apps(is_demo) WHERE is_demo = true');
 
+    // Conversion logs for the tiered LLM converter
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS conversion_logs (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        input_files INTEGER,
+        input_tokens_est INTEGER,
+        output_tokens_est INTEGER,
+        tier_used INTEGER,
+        model_used VARCHAR(100),
+        cost_estimate_usd NUMERIC(10, 6),
+        success BOOLEAN DEFAULT true,
+        validation_errors JSONB,
+        processing_time_ms INTEGER,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_conversion_logs_created ON conversion_logs(created_at)');
+
     // Backfill sort_order from created_at for existing rows
     await client.query(`
       UPDATE apps SET sort_order = sub.rn FROM (
