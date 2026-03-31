@@ -26,7 +26,8 @@ function formatWorkspace(ws) {
     slug: ws.slug,
     logoData: ws.logo_data || null,
     primaryColor: ws.primary_color,
-    accentColor: ws.accent_color
+    accentColor: ws.accent_color,
+    plan: ws.plan || 'free'
   };
 }
 

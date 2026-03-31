@@ -4,6 +4,7 @@ const rateLimit = require('express-rate-limit');
 const pool = require('../config/db');
 const { auth, adminOnly, validateId } = require('../middleware/auth');
 const { detectFileType, validateHtmlContent } = require('../services/fileDetection');
+const { convertToHtml } = require('../services/aiConvert');
 
 const router = express.Router();
 
@@ -93,6 +94,36 @@ router.post('/check', auth, (req, res) => {
     return res.status(400).json({ error: 'Filename is required' });
   }
   res.json(detectFileType(filename));
+});
+
+// POST /api/apps/convert — AI converts uploaded file to HTML (pro only)
+router.post('/convert', auth, upload.single('appFile'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    // Check workspace plan
+    const ws = await pool.query('SELECT plan FROM workspaces WHERE id = $1', [req.user.workspaceId]);
+    if (ws.rows.length === 0 || ws.rows[0].plan !== 'pro') {
+      return res.status(403).json({
+        error: 'upgrade_required',
+        message: 'AI conversion requires a Pro subscription'
+      });
+    }
+
+    if (!process.env.ANTHROPIC_API_KEY) {
+      return res.status(500).json({ error: 'AI conversion is not configured' });
+    }
+
+    const fileContent = req.file.buffer.toString('utf-8');
+    const html = await convertToHtml(req.file.originalname, fileContent);
+
+    res.json({ html, originalFilename: req.file.originalname });
+  } catch (err) {
+    console.error('Convert error:', err);
+    res.status(500).json({ error: 'AI conversion failed. Please try again or convert manually.' });
+  }
 });
 
 // PUT /api/apps/reorder

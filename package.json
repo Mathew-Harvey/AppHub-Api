@@ -15,6 +15,7 @@
     "testTimeout": 15000
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.80.0",
     "bcryptjs": "^2.4.3",
     "cookie-parser": "^1.4.6",
     "cors": "^2.8.5",

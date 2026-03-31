@@ -345,6 +345,7 @@ describe('GET /api/workspace', () => {
     expect(res.status).toBe(200);
     expect(res.body.workspace.name).toBe('Test Workspace');
     expect(res.body.workspace.primaryColor).toBe('#1a1a2e');
+    expect(res.body.workspace.plan).toBe('free');
   });
 });
 
@@ -556,6 +557,26 @@ describe('GET /api/apps/stats', () => {
     expect(typeof res.body.totalBuilders).toBe('number');
     expect(typeof res.body.newThisWeek).toBe('number');
     expect(Array.isArray(res.body.recentActivity)).toBe(true);
+  });
+});
+
+// ─── Apps: Convert (AI) ─────────────────────────────────────────────────────
+
+describe('POST /api/apps/convert', () => {
+  it('rejects without auth', async () => {
+    const res = await request(app)
+      .post('/api/apps/convert')
+      .attach('appFile', Buffer.from('const x = 1;'), 'app.js');
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects free plan workspace', async () => {
+    const res = await request(app)
+      .post('/api/apps/convert')
+      .set('Cookie', adminCookie)
+      .attach('appFile', Buffer.from('const x = 1;'), 'app.js');
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('upgrade_required');
   });
 });
 
