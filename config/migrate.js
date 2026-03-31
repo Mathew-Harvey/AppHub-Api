@@ -24,6 +24,8 @@ const migrate = async () => {
         plan VARCHAR(20) DEFAULT 'free',
         ai_conversions_used INTEGER DEFAULT 0,
         ai_conversions_reset_at TIMESTAMP DEFAULT NOW(),
+        stripe_customer_id VARCHAR(255),
+        stripe_subscription_id VARCHAR(255),
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
       )
@@ -94,6 +96,32 @@ const migrate = async () => {
       )
     `);
 
+    // App folders — per-user layout customisation within a workspace
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS app_folders (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL DEFAULT 'New Folder',
+        icon VARCHAR(10) DEFAULT '📁',
+        sort_order INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    // Items inside an app folder
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS app_folder_items (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        folder_id UUID REFERENCES app_folders(id) ON DELETE CASCADE,
+        app_id UUID REFERENCES apps(id) ON DELETE CASCADE,
+        sort_order INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(folder_id, app_id)
+      )
+    `);
+
     // Indexes
     await client.query('CREATE INDEX IF NOT EXISTS idx_users_workspace ON users(workspace_id)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)');
@@ -102,6 +130,9 @@ const migrate = async () => {
     await client.query('CREATE INDEX IF NOT EXISTS idx_invitations_workspace ON invitations(workspace_id)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_app_shares_app ON app_shares(app_id)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_app_shares_user ON app_shares(user_id)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_app_folders_user_ws ON app_folders(user_id, workspace_id)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_app_folder_items_folder ON app_folder_items(folder_id)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_app_folder_items_app ON app_folder_items(app_id)');
 
     // Idempotent migrations for existing databases
     await client.query('ALTER TABLE apps ADD COLUMN IF NOT EXISTS file_content TEXT');
@@ -117,8 +148,15 @@ const migrate = async () => {
     await client.query("ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS accent_color_light VARCHAR(7) DEFAULT '#d63851'");
     await client.query('ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS ai_conversions_used INTEGER DEFAULT 0');
     await client.query('ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS ai_conversions_reset_at TIMESTAMP DEFAULT NOW()');
+    await client.query('ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS stripe_customer_id VARCHAR(255)');
+    await client.query('ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS stripe_subscription_id VARCHAR(255)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_workspaces_stripe_customer ON workspaces(stripe_customer_id)');
     // Drop NOT NULL on old file_path column (no longer used, file_content replaces it)
     await client.query('ALTER TABLE apps ALTER COLUMN file_path DROP NOT NULL');
+
+    // Demo apps flag — demo apps are seeded on workspace creation and excluded from plan limits
+    await client.query('ALTER TABLE apps ADD COLUMN IF NOT EXISTS is_demo BOOLEAN DEFAULT false');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_apps_is_demo ON apps(is_demo) WHERE is_demo = true');
 
     // Backfill sort_order from created_at for existing rows
     await client.query(`

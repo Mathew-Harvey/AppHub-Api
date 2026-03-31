@@ -3,6 +3,8 @@ const multer = require('multer');
 const sharp = require('sharp');
 const pool = require('../config/db');
 const { auth, adminOnly, validateId } = require('../middleware/auth');
+const { enforceMemberLimit } = require('../middleware/subscription');
+const { getLimits } = require('../config/plans');
 
 const router = express.Router();
 
@@ -20,6 +22,7 @@ const logoUpload = multer({
 });
 
 function formatWorkspace(ws) {
+  const limits = getLimits(ws.plan || 'free');
   return {
     id: ws.id,
     name: ws.name,
@@ -30,6 +33,7 @@ function formatWorkspace(ws) {
     primaryColorLight: ws.primary_color_light || '#ffffff',
     accentColorLight: ws.accent_color_light || '#d63851',
     plan: ws.plan || 'free',
+    planLimits: limits,
     aiConversionsUsed: ws.ai_conversions_used || 0,
     aiConversionsResetAt: ws.ai_conversions_reset_at
   };
@@ -127,7 +131,7 @@ router.get('/members', auth, async (req, res) => {
 });
 
 // POST /api/workspace/invite — invite a user (admin only)
-router.post('/invite', auth, adminOnly, async (req, res) => {
+router.post('/invite', auth, adminOnly, enforceMemberLimit, async (req, res) => {
   const { email } = req.body;
   if (!email) {
     return res.status(400).json({ error: 'Email is required' });

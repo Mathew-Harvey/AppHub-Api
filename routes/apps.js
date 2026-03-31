@@ -6,6 +6,7 @@ const { auth, adminOnly, validateId } = require('../middleware/auth');
 const { detectFileType, validateHtmlContent } = require('../services/fileDetection');
 const crypto = require('crypto');
 const { convertToHtml, checkConversionQuota, incrementConversionCount } = require('../services/aiConvert');
+const { enforceAppLimit, requirePro } = require('../middleware/subscription');
 
 const router = express.Router();
 
@@ -31,6 +32,7 @@ function formatApp(row) {
     visibility: row.visibility,
     sortOrder: row.sort_order,
     pendingDelete: row.pending_delete || false,
+    isDemo: row.is_demo || false,
     originalFilename: row.original_filename,
     fileSize: row.file_size,
     uploadedBy: row.uploaded_by_name || null,
@@ -46,8 +48,10 @@ router.get('/stats', auth, async (req, res) => {
     const counts = await pool.query(
       `SELECT
         COUNT(*) AS total_apps,
+        COUNT(*) FILTER (WHERE is_demo = false) AS user_apps,
+        COUNT(*) FILTER (WHERE is_demo = true) AS demo_apps,
         COUNT(DISTINCT uploaded_by) AS total_builders,
-        COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days') AS new_this_week
+        COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '7 days' AND is_demo = false) AS new_this_week
        FROM apps
        WHERE workspace_id = $1 AND is_active = true AND pending_delete = false`,
       [req.user.workspaceId]
@@ -72,6 +76,8 @@ router.get('/stats', auth, async (req, res) => {
     const row = counts.rows[0];
     res.json({
       totalApps: parseInt(row.total_apps),
+      userApps: parseInt(row.user_apps),
+      demoApps: parseInt(row.demo_apps),
       totalBuilders: parseInt(row.total_builders),
       newThisWeek: parseInt(row.new_this_week),
       pendingDeletions: parseInt(pendingCount.rows[0].count),
@@ -109,18 +115,10 @@ if (process.env.NODE_ENV !== 'test') setInterval(() => {
 }, 10 * 60 * 1000);
 
 // POST /api/apps/convert — start AI conversion job (pro only, rate limited)
-router.post('/convert', auth, upload.single('appFile'), async (req, res) => {
+router.post('/convert', auth, requirePro, upload.single('appFile'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
-    }
-
-    const ws = await pool.query('SELECT plan FROM workspaces WHERE id = $1', [req.user.workspaceId]);
-    if (ws.rows.length === 0 || ws.rows[0].plan !== 'pro') {
-      return res.status(403).json({
-        error: 'upgrade_required',
-        message: 'AI conversion requires a Pro subscription'
-      });
     }
 
     const quota = await checkConversionQuota(pool, req.user.workspaceId);
@@ -279,7 +277,7 @@ router.post('/:id/reject-deletion', auth, adminOnly, validateId, async (req, res
 });
 
 // POST /api/apps/upload
-router.post('/upload', auth, uploadLimiter, upload.single('appFile'), async (req, res) => {
+router.post('/upload', auth, uploadLimiter, enforceAppLimit, upload.single('appFile'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -362,7 +360,7 @@ router.get('/', auth, async (req, res) => {
     const result = await pool.query(
       `SELECT DISTINCT a.id, a.name, a.description, a.icon, a.visibility,
               a.original_filename, a.file_size, a.sort_order, a.pending_delete,
-              a.created_at, a.updated_at,
+              a.is_demo, a.created_at, a.updated_at,
               u.display_name AS uploaded_by_name, u.email AS uploaded_by_email
        FROM apps a
        LEFT JOIN users u ON a.uploaded_by = u.id
@@ -376,7 +374,7 @@ router.get('/', auth, async (req, res) => {
            OR (a.visibility = 'specific' AND s.user_id IS NOT NULL)
            OR a.uploaded_by = $2
          )
-       ORDER BY a.sort_order ASC, a.created_at DESC`,
+       ORDER BY a.is_demo ASC, a.sort_order ASC, a.created_at DESC`,
       [req.user.workspaceId, req.user.id]
     );
     res.json({ apps: result.rows.map(formatApp) });
@@ -496,7 +494,21 @@ router.put('/:id/file', auth, validateId, upload.single('appFile'), async (req, 
   }
 });
 
-// DELETE /api/apps/:id — admin: immediate. member: pending approval.
+// POST /api/apps/dismiss-demos — dismiss all demo apps for this workspace (any user)
+router.post('/dismiss-demos', auth, async (req, res) => {
+  try {
+    await pool.query(
+      'UPDATE apps SET is_active = false, updated_at = NOW() WHERE workspace_id = $1 AND is_demo = true AND is_active = true',
+      [req.user.workspaceId]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Dismiss demos error:', err);
+    res.status(500).json({ error: 'Failed to dismiss demo apps' });
+  }
+});
+
+// DELETE /api/apps/:id — admin: immediate. member: pending approval. Demo apps: anyone can dismiss.
 router.delete('/:id', auth, validateId, async (req, res) => {
   try {
     const existing = await pool.query(
@@ -504,6 +516,13 @@ router.delete('/:id', auth, validateId, async (req, res) => {
       [req.params.id, req.user.workspaceId]
     );
     if (existing.rows.length === 0) return res.status(404).json({ error: 'App not found' });
+
+    // Demo apps can be dismissed by anyone
+    if (existing.rows[0].is_demo) {
+      await pool.query('UPDATE apps SET is_active = false, updated_at = NOW() WHERE id = $1', [req.params.id]);
+      return res.json({ ok: true, pending: false });
+    }
+
     if (existing.rows[0].uploaded_by !== req.user.id && req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Only the uploader or admin can delete this app' });
     }

@@ -4,6 +4,8 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
 const { auth } = require('../middleware/auth');
+const { getLimits } = require('../config/plans');
+const { seedDemoApps } = require('../config/demoApps');
 
 const router = express.Router();
 
@@ -41,6 +43,7 @@ async function getUserProfile(userId) {
   if (result.rows.length === 0) return null;
 
   const row = result.rows[0];
+  const plan = row.plan || 'free';
   return {
     id: row.id,
     email: row.email,
@@ -55,7 +58,8 @@ async function getUserProfile(userId) {
       accentColor: row.accent_color,
       primaryColorLight: row.primary_color_light || '#ffffff',
       accentColorLight: row.accent_color_light || '#d63851',
-      plan: row.plan || 'free'
+      plan,
+      planLimits: getLimits(plan)
     }
   };
 }
@@ -127,6 +131,11 @@ router.post('/register', async (req, res) => {
       'INSERT INTO users (workspace_id, email, password_hash, display_name, role) VALUES ($1, $2, $3, $4, $5) RETURNING id, email, display_name, role, workspace_id',
       [workspaceId, cleanEmail, passwordHash, cleanName, role]
     );
+
+    // Seed demo apps for brand-new workspaces (not invite-based registrations)
+    if (!inviteCode) {
+      await seedDemoApps(client, workspaceId, userResult.rows[0].id);
+    }
 
     await client.query('COMMIT');
 
