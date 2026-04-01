@@ -4,6 +4,7 @@ const helmet = require('helmet');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
+const morgan = require('morgan');
 
 const path = require('path');
 const authRoutes = require('./routes/auth');
@@ -19,7 +20,19 @@ const PORT = process.env.PORT || 3001;
 
 // Security headers
 app.use(helmet({
-  contentSecurityPolicy: false,
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "https://js.stripe.com"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "blob:"],
+      connectSrc: ["'self'", "https://api.stripe.com"],
+      frameSrc: ["'self'", "https://js.stripe.com", "https://hooks.stripe.com"],
+      frameAncestors: ["'self'"],
+      formAction: ["'self'"],
+      baseUri: ["'self'"],
+    },
+  },
   crossOriginEmbedderPolicy: false,
   hsts: process.env.NODE_ENV === 'production' ? { maxAge: 31536000, includeSubDomains: true } : false
 }));
@@ -43,6 +56,11 @@ app.use(cors({
 }));
 
 app.use(cookieParser());
+
+// Request logging (skip in test)
+if (process.env.NODE_ENV !== 'test') {
+  app.use(morgan('short'));
+}
 
 // Stripe webhook needs the raw body — skip JSON parsing for that route
 app.use((req, res, next) => {

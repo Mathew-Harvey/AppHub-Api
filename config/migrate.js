@@ -134,6 +134,12 @@ const migrate = async () => {
     await client.query('CREATE INDEX IF NOT EXISTS idx_app_folder_items_folder ON app_folder_items(folder_id)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_app_folder_items_app ON app_folder_items(app_id)');
 
+    // Composite indexes for common query patterns
+    await client.query('CREATE INDEX IF NOT EXISTS idx_apps_workspace_active ON apps(workspace_id, is_active) WHERE is_active = true');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_apps_workspace_active_pending ON apps(workspace_id, is_active, pending_delete) WHERE is_active = true AND pending_delete = false');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_users_email_active ON users(email, is_active) WHERE is_active = true');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_invitations_email_pending ON invitations(email, accepted) WHERE accepted = false');
+
     // Idempotent migrations for existing databases
     await client.query('ALTER TABLE apps ADD COLUMN IF NOT EXISTS file_content TEXT');
     await client.query('ALTER TABLE apps ADD COLUMN IF NOT EXISTS sort_order INTEGER DEFAULT 0');
@@ -181,6 +187,21 @@ const migrate = async () => {
       )
     `);
     await client.query('CREATE INDEX IF NOT EXISTS idx_conversion_logs_created ON conversion_logs(created_at)');
+
+    // Conversion jobs (replaces in-memory Map for persistence across restarts)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS conversion_jobs (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        status VARCHAR(20) DEFAULT 'processing' CHECK (status IN ('processing', 'done', 'failed')),
+        html TEXT,
+        error TEXT,
+        original_filename VARCHAR(255),
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_conversion_jobs_created ON conversion_jobs(created_at)');
 
     // Backfill sort_order from created_at for existing rows
     await client.query(`

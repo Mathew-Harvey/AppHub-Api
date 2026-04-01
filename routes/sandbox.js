@@ -8,7 +8,8 @@ const router = express.Router();
 // GET /sandbox/:appId — serve the HTML app inside an iframe (from DB)
 router.get('/:appId', validateId, async (req, res) => {
   try {
-    const token = req.cookies?.token;
+    // Accept token from query param (sandbox-specific) or cookie fallback
+    const token = req.query.token || req.cookies?.token;
     if (!token) {
       return res.status(401).send('<html><body><h2>Not authenticated</h2><p>Please log in to view this app.</p></body></html>');
     }

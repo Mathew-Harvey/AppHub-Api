@@ -16,7 +16,7 @@ function getCookieOptions() {
     secure: isProd,
     sameSite: isProd ? 'none' : 'lax',
     maxAge: 7 * 24 * 60 * 60 * 1000,
-    path: '/'
+    path: '/api'
   };
 }
 
@@ -319,7 +319,7 @@ router.post('/login', async (req, res) => {
 // POST /api/auth/logout
 router.post('/logout', (req, res) => {
   const isProd = process.env.NODE_ENV === 'production';
-  res.clearCookie('token', { path: '/', sameSite: isProd ? 'none' : 'lax', secure: isProd });
+  res.clearCookie('token', { path: '/api', sameSite: isProd ? 'none' : 'lax', secure: isProd });
   res.json({ ok: true });
 });
 
@@ -392,9 +392,10 @@ router.post('/request-reset', async (req, res) => {
       [token, expiresAt, result.rows[0].id]
     );
 
-    const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
-    const resetLink = `${clientUrl}/reset-password?token=${token}`;
-    res.json({ ok: true, resetLink });
+    // TODO: Send email with reset link when email service is configured
+    // const resetLink = `${clientUrl}/reset-password?token=${token}`;
+
+    res.json({ ok: true });
   } catch (err) {
     console.error('Request reset error:', err);
     res.status(500).json({ error: 'Failed to request reset' });
@@ -467,6 +468,16 @@ router.post('/admin-reset', auth, async (req, res) => {
     console.error('Admin reset error:', err);
     res.status(500).json({ error: 'Failed to generate reset link' });
   }
+});
+
+// GET /api/auth/sandbox-token — short-lived token for iframe sandbox
+router.get('/sandbox-token', auth, (req, res) => {
+  const token = jwt.sign(
+    { id: req.user.id, email: req.user.email, workspaceId: req.user.workspaceId, role: req.user.role },
+    process.env.JWT_SECRET,
+    { expiresIn: '1h' }
+  );
+  res.json({ token });
 });
 
 module.exports = router;
