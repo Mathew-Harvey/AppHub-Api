@@ -28,6 +28,13 @@ function signToken(user) {
   );
 }
 
+function validatePassword(password) {
+  if (!password || password.length < 8) return false;
+  if (!/[A-Z]/.test(password)) return false;
+  if (!/[0-9]/.test(password)) return false;
+  return true;
+}
+
 async function getUserProfile(userId) {
   const result = await pool.query(
     `SELECT u.id, u.email, u.display_name, u.role, u.workspace_id,
@@ -71,8 +78,17 @@ router.post('/register', async (req, res) => {
   if (!email || !password || !displayName) {
     return res.status(400).json({ error: 'Email, password, and display name are required' });
   }
-  if (password.length < 8) {
-    return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  if (!validatePassword(password)) {
+    return res.status(400).json({ error: 'Password must be at least 8 characters with one uppercase letter and one number' });
+  }
+  if (displayName.length > 100) {
+    return res.status(400).json({ error: 'Display name must be 100 characters or less' });
+  }
+  if (email.length > 255) {
+    return res.status(400).json({ error: 'Email must be 255 characters or less' });
+  }
+  if (workspaceName && workspaceName.length > 100) {
+    return res.status(400).json({ error: 'Workspace name must be 100 characters or less' });
   }
 
   const cleanEmail = email.toLowerCase().trim();
@@ -205,8 +221,8 @@ router.post('/accept-invite', async (req, res) => {
   if (!email || !password || !displayName || !inviteId) {
     return res.status(400).json({ error: 'Email, password, display name, and invite ID are required' });
   }
-  if (password.length < 8) {
-    return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  if (!validatePassword(password)) {
+    return res.status(400).json({ error: 'Password must be at least 8 characters with one uppercase letter and one number' });
   }
 
   const cleanEmail = email.toLowerCase().trim();
@@ -327,8 +343,8 @@ router.post('/change-password', auth, async (req, res) => {
   if (!currentPassword || !newPassword) {
     return res.status(400).json({ error: 'Current password and new password are required' });
   }
-  if (newPassword.length < 8) {
-    return res.status(400).json({ error: 'New password must be at least 8 characters' });
+  if (!validatePassword(newPassword)) {
+    return res.status(400).json({ error: 'Password must be at least 8 characters with one uppercase letter and one number' });
   }
 
   try {
@@ -376,7 +392,9 @@ router.post('/request-reset', async (req, res) => {
       [token, expiresAt, result.rows[0].id]
     );
 
-    res.json({ ok: true });
+    const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+    const resetLink = `${clientUrl}/reset-password?token=${token}`;
+    res.json({ ok: true, resetLink });
   } catch (err) {
     console.error('Request reset error:', err);
     res.status(500).json({ error: 'Failed to request reset' });
@@ -389,8 +407,8 @@ router.post('/reset-password', async (req, res) => {
   if (!token || !newPassword) {
     return res.status(400).json({ error: 'Token and new password are required' });
   }
-  if (newPassword.length < 8) {
-    return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  if (!validatePassword(newPassword)) {
+    return res.status(400).json({ error: 'Password must be at least 8 characters with one uppercase letter and one number' });
   }
 
   try {
@@ -436,7 +454,7 @@ router.post('/admin-reset', auth, async (req, res) => {
     }
 
     const token = crypto.randomBytes(32).toString('hex');
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+    const expiresAt = new Date(Date.now() + 4 * 60 * 60 * 1000); // 4 hours
 
     await pool.query(
       'UPDATE users SET reset_token = $1, reset_token_expires = $2 WHERE id = $3',
