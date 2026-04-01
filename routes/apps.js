@@ -288,6 +288,12 @@ router.post('/upload', auth, uploadLimiter, enforceAppLimit, upload.single('appF
     if (!name || !name.trim()) {
       return res.status(400).json({ error: 'App name is required' });
     }
+    if (name.length > 100) {
+      return res.status(400).json({ error: 'App name must be 100 characters or less' });
+    }
+    if (description && description.length > 500) {
+      return res.status(400).json({ error: 'Description must be 500 characters or less' });
+    }
 
     const fileCheck = detectFileType(req.file.originalname);
     if (!fileCheck.supported) {
@@ -423,6 +429,12 @@ router.get('/:id', auth, validateId, async (req, res) => {
 // PUT /api/apps/:id — update metadata
 router.put('/:id', auth, validateId, async (req, res) => {
   const { name, description, icon, visibility, sharedWith } = req.body;
+  if (name && name.length > 100) {
+    return res.status(400).json({ error: 'App name must be 100 characters or less' });
+  }
+  if (description && description.length > 500) {
+    return res.status(400).json({ error: 'Description must be 500 characters or less' });
+  }
   try {
     const existing = await pool.query('SELECT * FROM apps WHERE id = $1 AND workspace_id = $2 AND is_active = true', [req.params.id, req.user.workspaceId]);
     if (existing.rows.length === 0) return res.status(404).json({ error: 'App not found' });

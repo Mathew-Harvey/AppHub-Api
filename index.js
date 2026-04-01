@@ -20,12 +20,16 @@ const PORT = process.env.PORT || 3001;
 // Security headers
 app.use(helmet({
   contentSecurityPolicy: false,
-  crossOriginEmbedderPolicy: false
+  crossOriginEmbedderPolicy: false,
+  hsts: process.env.NODE_ENV === 'production' ? { maxAge: 31536000, includeSubDomains: true } : false
 }));
 
 // CORS — exact origin matching (no startsWith to prevent subdomain bypass)
 const allowedOrigins = new Set(
-  [process.env.CLIENT_URL, 'http://localhost:5173', 'http://localhost:3001'].filter(Boolean)
+  [
+    process.env.CLIENT_URL,
+    ...(process.env.NODE_ENV !== 'production' ? ['http://localhost:5173', 'http://localhost:3001'] : [])
+  ].filter(Boolean)
 );
 
 app.use(cors({
@@ -67,8 +71,14 @@ const apiLimiter = rateLimit({
 });
 
 // Health check
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+app.get('/api/health', async (req, res) => {
+  try {
+    const pool = require('./config/db');
+    await pool.query('SELECT 1');
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(503).json({ status: 'unhealthy', error: 'Database connection failed', timestamp: new Date().toISOString() });
+  }
 });
 
 // API routes

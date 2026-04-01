@@ -52,9 +52,11 @@ router.get('/:appId', validateId, async (req, res) => {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
-    // No restrictive CSP — user-uploaded apps need full access to external
-    // resources (CDNs, APIs, audio, images). The iframe sandbox attribute
-    // is the security boundary, not CSP.
+    res.setHeader('Content-Security-Policy', "default-src 'self' 'unsafe-inline' 'unsafe-eval' https: data: blob:; frame-ancestors 'none'");
+    // SECURITY: This route reads the JWT cookie for auth. User-uploaded HTML
+    // running in the iframe could read the same cookie if served on the same
+    // origin. X-Frame-Options: DENY prevents direct access outside the app's iframe.
+    res.setHeader('X-Frame-Options', 'DENY');
 
     res.send(app.file_content);
   } catch (err) {
