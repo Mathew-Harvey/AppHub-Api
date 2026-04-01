@@ -53,11 +53,9 @@ router.get('/:appId', validateId, async (req, res) => {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
-    res.setHeader('Content-Security-Policy', "default-src 'self' 'unsafe-inline' 'unsafe-eval' https: data: blob:; frame-ancestors 'none'");
-    // SECURITY: This route reads the JWT cookie for auth. User-uploaded HTML
-    // running in the iframe could read the same cookie if served on the same
-    // origin. X-Frame-Options: DENY prevents direct access outside the app's iframe.
-    res.setHeader('X-Frame-Options', 'DENY');
+    const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+    res.setHeader('Content-Security-Policy', `default-src 'self' 'unsafe-inline' 'unsafe-eval' https: data: blob:; frame-ancestors ${clientUrl}`);
+    res.setHeader('X-Frame-Options', `ALLOW-FROM ${clientUrl}`);
 
     res.send(app.file_content);
   } catch (err) {
