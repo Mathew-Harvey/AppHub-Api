@@ -55,7 +55,7 @@ async function convertToHtml(filename, fileBuffer) {
   }
 
   const message = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
+    model: process.env.AI_CONVERT_MODEL || 'claude-sonnet-4-20250514',
     max_tokens: 16000,
     messages: [{
       role: 'user',

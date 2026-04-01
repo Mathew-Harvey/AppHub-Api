@@ -4,7 +4,6 @@ const rateLimit = require('express-rate-limit');
 const pool = require('../config/db');
 const { auth, adminOnly, validateId } = require('../middleware/auth');
 const { detectFileType, validateHtmlContent } = require('../services/fileDetection');
-const crypto = require('crypto');
 const { convertToHtml, checkConversionQuota, incrementConversionCount } = require('../services/aiConvert');
 const { enforceAppLimit, requirePro } = require('../middleware/subscription');
 
@@ -103,15 +102,11 @@ router.post('/check', auth, (req, res) => {
   res.json(detectFileType(filename));
 });
 
-// In-memory job store for AI conversions (survives within process lifetime)
-const conversionJobs = new Map();
-
-// Clean up old jobs every 10 minutes (skip in test)
-if (process.env.NODE_ENV !== 'test') setInterval(() => {
-  const cutoff = Date.now() - 30 * 60 * 1000;
-  for (const [id, job] of conversionJobs) {
-    if (job.createdAt < cutoff) conversionJobs.delete(id);
-  }
+// Clean up old conversion jobs every 10 minutes (skip in test)
+if (process.env.NODE_ENV !== 'test') setInterval(async () => {
+  try {
+    await pool.query("DELETE FROM conversion_jobs WHERE created_at < NOW() - INTERVAL '30 minutes'");
+  } catch {}
 }, 10 * 60 * 1000);
 
 // POST /api/apps/convert — start AI conversion job (pro only, rate limited)
@@ -134,29 +129,28 @@ router.post('/convert', auth, requirePro, upload.single('appFile'), async (req, 
       return res.status(500).json({ error: 'AI conversion is not configured' });
     }
 
-    // Create job, return immediately
-    const jobId = crypto.randomUUID();
-    const job = {
-      id: jobId,
-      status: 'processing',
-      html: null,
-      error: null,
-      originalFilename: req.file.originalname,
-      createdAt: Date.now()
-    };
-    conversionJobs.set(jobId, job);
+    // Create job in DB, return immediately
+    const jobResult = await pool.query(
+      'INSERT INTO conversion_jobs (workspace_id, user_id, original_filename) VALUES ($1, $2, $3) RETURNING id',
+      [req.user.workspaceId, req.user.id, req.file.originalname]
+    );
+    const jobId = jobResult.rows[0].id;
 
     // Run conversion in background
     convertToHtml(req.file.originalname, req.file.buffer)
       .then(async (html) => {
-        job.status = 'done';
-        job.html = html;
+        await pool.query(
+          "UPDATE conversion_jobs SET status = 'done', html = $1 WHERE id = $2",
+          [html, jobId]
+        );
         await incrementConversionCount(pool, req.user.workspaceId);
       })
-      .catch((err) => {
+      .catch(async (err) => {
         console.error('Convert error:', err);
-        job.status = 'failed';
-        job.error = 'AI conversion failed. Please try again or convert manually.';
+        await pool.query(
+          "UPDATE conversion_jobs SET status = 'failed', error = 'AI conversion failed. Please try again or convert manually.' WHERE id = $1",
+          [jobId]
+        );
       });
 
     res.json({ jobId });
@@ -167,23 +161,32 @@ router.post('/convert', auth, requirePro, upload.single('appFile'), async (req, 
 });
 
 // GET /api/apps/convert/:jobId — poll conversion status
-router.get('/convert/:jobId', auth, (req, res) => {
-  const job = conversionJobs.get(req.params.jobId);
-  if (!job) {
-    return res.status(404).json({ error: 'Conversion job not found' });
-  }
+router.get('/convert/:jobId', auth, async (req, res) => {
+  try {
+    const job = await pool.query(
+      'SELECT id, status, html, error, original_filename FROM conversion_jobs WHERE id = $1',
+      [req.params.jobId]
+    );
+    if (job.rows.length === 0) {
+      return res.status(404).json({ error: 'Conversion job not found' });
+    }
 
-  if (job.status === 'processing') {
-    return res.json({ status: 'processing' });
-  }
-  if (job.status === 'failed') {
-    conversionJobs.delete(req.params.jobId);
-    return res.json({ status: 'failed', error: job.error });
-  }
+    const row = job.rows[0];
+    if (row.status === 'processing') {
+      return res.json({ status: 'processing' });
+    }
+    if (row.status === 'failed') {
+      await pool.query('DELETE FROM conversion_jobs WHERE id = $1', [row.id]);
+      return res.json({ status: 'failed', error: row.error });
+    }
 
-  // Done — return HTML and clean up
-  conversionJobs.delete(req.params.jobId);
-  res.json({ status: 'done', html: job.html, originalFilename: job.originalFilename });
+    // Done — return HTML and clean up
+    await pool.query('DELETE FROM conversion_jobs WHERE id = $1', [row.id]);
+    res.json({ status: 'done', html: row.html, originalFilename: row.original_filename });
+  } catch (err) {
+    console.error('Poll convert error:', err);
+    res.status(500).json({ error: 'Failed to check conversion status' });
+  }
 });
 
 // PUT /api/apps/reorder
