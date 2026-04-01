@@ -1,8 +1,8 @@
 const PLANS = {
   free: {
     name: 'Free',
-    maxApps: 10,
-    maxMembers: 5,
+    maxApps: 3,
+    maxMembers: 3,
     aiConversions: false,
     aiConversionsLimit: 0,
     priceMonthly: 0
@@ -13,7 +13,7 @@ const PLANS = {
     maxMembers: Infinity,
     aiConversions: true,
     aiConversionsLimit: 50,
-    priceMonthly: 500 // cents
+    priceMonthly: 1200 // cents
   }
 };
 
