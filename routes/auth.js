@@ -6,6 +6,7 @@ const pool = require('../config/db');
 const { auth } = require('../middleware/auth');
 const { getLimits } = require('../config/plans');
 const { seedDemoApps } = require('../config/demoApps');
+const { sendPasswordReset, sendWelcome } = require('../services/email');
 
 const router = express.Router();
 
@@ -162,6 +163,8 @@ router.post('/register', async (req, res) => {
 
     res.cookie('token', token, getCookieOptions());
     res.status(201).json({ user: profile });
+
+    sendWelcome({ to: cleanEmail, displayName: cleanName, workspaceName: workspaceName?.trim() || null });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Registration error:', err);
@@ -394,8 +397,9 @@ router.post('/request-reset', async (req, res) => {
       [token, expiresAt, result.rows[0].id]
     );
 
-    // TODO: Send email with reset link when email service is configured
-    // const resetLink = `${clientUrl}/reset-password?token=${token}`;
+    const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+    const resetLink = `${clientUrl}/reset-password?token=${token}`;
+    sendPasswordReset({ to: email.toLowerCase().trim(), resetLink });
 
     res.json({ ok: true });
   } catch (err) {

@@ -3,6 +3,7 @@ const multer = require('multer');
 const sharp = require('sharp');
 const pool = require('../config/db');
 const { auth, adminOnly, validateId } = require('../middleware/auth');
+const { sendInvite } = require('../services/email');
 const { enforceMemberLimit } = require('../middleware/subscription');
 const { getLimits } = require('../config/plans');
 
@@ -194,6 +195,17 @@ router.post('/invite', auth, adminOnly, enforceMemberLimit, async (req, res) => 
     const result = await pool.query('INSERT INTO invitations (workspace_id, email, invited_by) VALUES ($1, $2, $3) RETURNING *', [req.user.workspaceId, cleanEmail, req.user.id]);
     const invitation = result.rows[0];
     const inviteLink = `${process.env.CLIENT_URL || 'http://localhost:5173'}/register?invite=${invitation.id}`;
+
+    // Send invite email (async, don't block response)
+    const wsRow = await pool.query('SELECT name FROM workspaces WHERE id = $1', [req.user.workspaceId]);
+    const inviterRow = await pool.query('SELECT display_name FROM users WHERE id = $1', [req.user.id]);
+    sendInvite({
+      to: cleanEmail,
+      workspaceName: wsRow.rows[0]?.name || 'a workspace',
+      inviteLink,
+      invitedBy: inviterRow.rows[0]?.display_name || null,
+    });
+
     res.status(201).json({ invitation: { id: invitation.id, email: invitation.email, inviteLink, accepted: false } });
   } catch (err) {
     console.error('Invite error:', err);
