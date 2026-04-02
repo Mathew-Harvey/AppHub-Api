@@ -6,6 +6,7 @@ const pool = require('../config/db');
 const { auth } = require('../middleware/auth');
 const { getLimits } = require('../config/plans');
 const { seedDemoApps } = require('../config/demoApps');
+const { sendPasswordReset, sendWelcome } = require('../services/email');
 
 const router = express.Router();
 
@@ -39,8 +40,9 @@ async function getUserProfile(userId) {
   const result = await pool.query(
     `SELECT u.id, u.email, u.display_name, u.role, u.workspace_id,
             w.name AS workspace_name, w.slug AS workspace_slug,
-            w.logo_data, w.primary_color, w.accent_color,
-            w.primary_color_light, w.accent_color_light, w.plan
+            w.primary_color, w.accent_color,
+            w.primary_color_light, w.accent_color_light, w.plan,
+            CASE WHEN w.logo_data IS NOT NULL THEN true ELSE false END AS has_logo
      FROM users u
      JOIN workspaces w ON u.workspace_id = w.id
      WHERE u.id = $1 AND u.is_active = true`,
@@ -60,7 +62,7 @@ async function getUserProfile(userId) {
     workspace: {
       name: row.workspace_name,
       slug: row.workspace_slug,
-      logoData: row.logo_data,
+      logoUrl: row.has_logo ? `/api/workspace/logo` : null,
       primaryColor: row.primary_color,
       accentColor: row.accent_color,
       primaryColorLight: row.primary_color_light || '#ffffff',
@@ -161,6 +163,8 @@ router.post('/register', async (req, res) => {
 
     res.cookie('token', token, getCookieOptions());
     res.status(201).json({ user: profile });
+
+    sendWelcome({ to: cleanEmail, displayName: cleanName, workspaceName: workspaceName?.trim() || null });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Registration error:', err);
@@ -189,7 +193,8 @@ router.post('/check-email', async (req, res) => {
     }
 
     const inviteResult = await pool.query(
-      `SELECT i.id AS invite_id, i.workspace_id, w.name AS workspace_name, w.logo_data
+      `SELECT i.id AS invite_id, i.workspace_id, w.name AS workspace_name,
+              CASE WHEN w.logo_data IS NOT NULL THEN true ELSE false END AS has_logo
        FROM invitations i
        JOIN workspaces w ON i.workspace_id = w.id
        WHERE i.email = $1 AND i.accepted = false`,
@@ -202,7 +207,7 @@ router.post('/check-email', async (req, res) => {
           inviteId: r.invite_id,
           workspaceId: r.workspace_id,
           workspaceName: r.workspace_name,
-          workspaceLogoData: r.logo_data || null
+          workspaceLogoUrl: r.has_logo ? `/api/workspace/logo/${r.workspace_id}` : null
         }))
       });
     }
@@ -392,8 +397,9 @@ router.post('/request-reset', async (req, res) => {
       [token, expiresAt, result.rows[0].id]
     );
 
-    // TODO: Send email with reset link when email service is configured
-    // const resetLink = `${clientUrl}/reset-password?token=${token}`;
+    const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+    const resetLink = `${clientUrl}/reset-password?token=${token}`;
+    sendPasswordReset({ to: email.toLowerCase().trim(), resetLink });
 
     res.json({ ok: true });
   } catch (err) {

@@ -3,6 +3,7 @@ const multer = require('multer');
 const sharp = require('sharp');
 const pool = require('../config/db');
 const { auth, adminOnly, validateId } = require('../middleware/auth');
+const { sendInvite } = require('../services/email');
 const { enforceMemberLimit } = require('../middleware/subscription');
 const { getLimits } = require('../config/plans');
 
@@ -26,7 +27,7 @@ function formatWorkspace(ws) {
     id: ws.id,
     name: ws.name,
     slug: ws.slug,
-    logoData: ws.logo_data || null,
+    logoUrl: ws.logo_data ? '/api/workspace/logo' : null,
     primaryColor: ws.primary_color,
     accentColor: ws.accent_color,
     primaryColorLight: ws.primary_color_light || '#ffffff',
@@ -84,6 +85,64 @@ router.put('/', auth, adminOnly, async (req, res) => {
   }
 });
 
+// GET /api/workspace/logo/:id — serve logo publicly by workspace ID (for invite pages)
+router.get('/logo/:id', validateId, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT logo_data FROM workspaces WHERE id = $1',
+      [req.params.id]
+    );
+    if (result.rows.length === 0 || !result.rows[0].logo_data) {
+      return res.status(404).json({ error: 'No logo found' });
+    }
+
+    const dataUri = result.rows[0].logo_data;
+    const matches = dataUri.match(/^data:(.+);base64,(.+)$/);
+    if (!matches) {
+      return res.status(500).json({ error: 'Invalid logo data' });
+    }
+
+    const contentType = matches[1];
+    const buffer = Buffer.from(matches[2], 'base64');
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
+    res.send(buffer);
+  } catch (err) {
+    console.error('Get logo error:', err);
+    res.status(500).json({ error: 'Failed to get logo' });
+  }
+});
+
+// GET /api/workspace/logo — serve logo for authenticated user's workspace
+router.get('/logo', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT logo_data FROM workspaces WHERE id = $1',
+      [req.user.workspaceId]
+    );
+    if (result.rows.length === 0 || !result.rows[0].logo_data) {
+      return res.status(404).json({ error: 'No logo found' });
+    }
+
+    const dataUri = result.rows[0].logo_data;
+    const matches = dataUri.match(/^data:(.+);base64,(.+)$/);
+    if (!matches) {
+      return res.status(500).json({ error: 'Invalid logo data' });
+    }
+
+    const contentType = matches[1];
+    const buffer = Buffer.from(matches[2], 'base64');
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
+    res.send(buffer);
+  } catch (err) {
+    console.error('Get logo error:', err);
+    res.status(500).json({ error: 'Failed to get logo' });
+  }
+});
+
 router.post('/logo', auth, adminOnly, logoUpload.single('logo'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
@@ -136,6 +195,17 @@ router.post('/invite', auth, adminOnly, enforceMemberLimit, async (req, res) => 
     const result = await pool.query('INSERT INTO invitations (workspace_id, email, invited_by) VALUES ($1, $2, $3) RETURNING *', [req.user.workspaceId, cleanEmail, req.user.id]);
     const invitation = result.rows[0];
     const inviteLink = `${process.env.CLIENT_URL || 'http://localhost:5173'}/register?invite=${invitation.id}`;
+
+    // Send invite email (async, don't block response)
+    const wsRow = await pool.query('SELECT name FROM workspaces WHERE id = $1', [req.user.workspaceId]);
+    const inviterRow = await pool.query('SELECT display_name FROM users WHERE id = $1', [req.user.id]);
+    sendInvite({
+      to: cleanEmail,
+      workspaceName: wsRow.rows[0]?.name || 'a workspace',
+      inviteLink,
+      invitedBy: inviterRow.rows[0]?.display_name || null,
+    });
+
     res.status(201).json({ invitation: { id: invitation.id, email: invitation.email, inviteLink, accepted: false } });
   } catch (err) {
     console.error('Invite error:', err);

@@ -2,15 +2,15 @@ services:
   - type: web
     name: apphub-api
     runtime: node
+    plan: starter
     buildCommand: npm install && npm test && npm run db:migrate
     startCommand: node index.js
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production
       - key: JWT_SECRET
         generateValue: true
-      - key: UPLOAD_DIR
-        value: /opt/render/project/src/uploads
       - key: MAX_FILE_SIZE
         value: "5242880"
       - key: CLIENT_URL
@@ -19,9 +19,25 @@ services:
         fromDatabase:
           name: apphub-db
           property: connectionString
+      - key: DATABASE_SSLMODE
+        value: no-verify
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: STRIPE_PRICE_ID
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: AI_CONVERT_MODEL
+        value: claude-sonnet-4-20250514
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        value: "AppHub <noreply@my-app-hub.com>"
 
 databases:
   - name: apphub-db
-    plan: free
+    plan: starter
     databaseName: apphub
     postgresMajorVersion: "16"
