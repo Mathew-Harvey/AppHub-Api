@@ -39,8 +39,9 @@ async function getUserProfile(userId) {
   const result = await pool.query(
     `SELECT u.id, u.email, u.display_name, u.role, u.workspace_id,
             w.name AS workspace_name, w.slug AS workspace_slug,
-            w.logo_data, w.primary_color, w.accent_color,
-            w.primary_color_light, w.accent_color_light, w.plan
+            w.primary_color, w.accent_color,
+            w.primary_color_light, w.accent_color_light, w.plan,
+            CASE WHEN w.logo_data IS NOT NULL THEN true ELSE false END AS has_logo
      FROM users u
      JOIN workspaces w ON u.workspace_id = w.id
      WHERE u.id = $1 AND u.is_active = true`,
@@ -60,7 +61,7 @@ async function getUserProfile(userId) {
     workspace: {
       name: row.workspace_name,
       slug: row.workspace_slug,
-      logoData: row.logo_data,
+      logoUrl: row.has_logo ? `/api/workspace/logo` : null,
       primaryColor: row.primary_color,
       accentColor: row.accent_color,
       primaryColorLight: row.primary_color_light || '#ffffff',
@@ -189,7 +190,8 @@ router.post('/check-email', async (req, res) => {
     }
 
     const inviteResult = await pool.query(
-      `SELECT i.id AS invite_id, i.workspace_id, w.name AS workspace_name, w.logo_data
+      `SELECT i.id AS invite_id, i.workspace_id, w.name AS workspace_name,
+              CASE WHEN w.logo_data IS NOT NULL THEN true ELSE false END AS has_logo
        FROM invitations i
        JOIN workspaces w ON i.workspace_id = w.id
        WHERE i.email = $1 AND i.accepted = false`,
@@ -202,7 +204,7 @@ router.post('/check-email', async (req, res) => {
           inviteId: r.invite_id,
           workspaceId: r.workspace_id,
           workspaceName: r.workspace_name,
-          workspaceLogoData: r.logo_data || null
+          workspaceLogoUrl: r.has_logo ? `/api/workspace/logo/${r.workspace_id}` : null
         }))
       });
     }

@@ -26,7 +26,7 @@ function formatWorkspace(ws) {
     id: ws.id,
     name: ws.name,
     slug: ws.slug,
-    logoData: ws.logo_data || null,
+    logoUrl: ws.logo_data ? '/api/workspace/logo' : null,
     primaryColor: ws.primary_color,
     accentColor: ws.accent_color,
     primaryColorLight: ws.primary_color_light || '#ffffff',
@@ -81,6 +81,64 @@ router.put('/', auth, adminOnly, async (req, res) => {
   } catch (err) {
     console.error('Update workspace error:', err);
     res.status(500).json({ error: 'Failed to update workspace' });
+  }
+});
+
+// GET /api/workspace/logo/:id — serve logo publicly by workspace ID (for invite pages)
+router.get('/logo/:id', validateId, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT logo_data FROM workspaces WHERE id = $1',
+      [req.params.id]
+    );
+    if (result.rows.length === 0 || !result.rows[0].logo_data) {
+      return res.status(404).json({ error: 'No logo found' });
+    }
+
+    const dataUri = result.rows[0].logo_data;
+    const matches = dataUri.match(/^data:(.+);base64,(.+)$/);
+    if (!matches) {
+      return res.status(500).json({ error: 'Invalid logo data' });
+    }
+
+    const contentType = matches[1];
+    const buffer = Buffer.from(matches[2], 'base64');
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
+    res.send(buffer);
+  } catch (err) {
+    console.error('Get logo error:', err);
+    res.status(500).json({ error: 'Failed to get logo' });
+  }
+});
+
+// GET /api/workspace/logo — serve logo for authenticated user's workspace
+router.get('/logo', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT logo_data FROM workspaces WHERE id = $1',
+      [req.user.workspaceId]
+    );
+    if (result.rows.length === 0 || !result.rows[0].logo_data) {
+      return res.status(404).json({ error: 'No logo found' });
+    }
+
+    const dataUri = result.rows[0].logo_data;
+    const matches = dataUri.match(/^data:(.+);base64,(.+)$/);
+    if (!matches) {
+      return res.status(500).json({ error: 'Invalid logo data' });
+    }
+
+    const contentType = matches[1];
+    const buffer = Buffer.from(matches[2], 'base64');
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
+    res.send(buffer);
+  } catch (err) {
+    console.error('Get logo error:', err);
+    res.status(500).json({ error: 'Failed to get logo' });
   }
 });
 
