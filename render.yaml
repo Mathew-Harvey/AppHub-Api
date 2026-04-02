@@ -31,6 +31,10 @@ services:
         sync: false
       - key: AI_CONVERT_MODEL
         value: claude-sonnet-4-20250514
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        value: "AppHub <noreply@my-app-hub.com>"
 
 databases:
   - name: apphub-db
