@@ -1,9 +1,18 @@
+const fs = require('fs');
+const path = require('path');
+
+function loadHtml(dir, filename) {
+  return fs.readFileSync(path.join(__dirname, '..', dir, filename), 'utf-8');
+}
+
 const DEMO_APPS = [
+  // ── Original demo apps (demoCategory: 'Demo Apps') ──────────────────
   {
     name: 'Welcome to AppHub',
     description: 'A quick-start guide showing how AppHub works. This is a demo app — feel free to explore!',
     icon: '👋',
     original_filename: 'welcome.html',
+    demoCategory: 'Demo Apps',
     file_content: `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -42,7 +51,8 @@ h1{font-size:2.2rem;margin-bottom:12px}
     name: 'Sample Calculator',
     description: 'A simple calculator demo. Shows what a typical internal tool looks like on AppHub.',
     icon: '🧮',
-    original_filename: 'calculator.html',
+    original_filename: 'calculator-simple.html',
+    demoCategory: 'Demo Apps',
     file_content: `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -112,7 +122,8 @@ function percentage(){current=String(parseFloat(current)/100);update()}
     name: 'Team Notes',
     description: 'A collaborative sticky-notes board demo. Shows rich interactive apps running inside AppHub.',
     icon: '📝',
-    original_filename: 'notes.html',
+    original_filename: 'notes-simple.html',
+    demoCategory: 'Demo Apps',
     file_content: `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -154,19 +165,113 @@ render();
 </script>
 </body>
 </html>`
+  },
+
+  // ── Demo Games (demoCategory: 'Demo Games') ─────────────────────────
+  {
+    name: 'Snake',
+    description: 'Classic snake game with power-ups, combos, and retro CRT effects',
+    icon: '🐍',
+    original_filename: 'snake.html',
+    demoCategory: 'Demo Games',
+    get file_content() { return loadHtml('exampleAppsGames', 'snake.html'); }
+  },
+  {
+    name: 'Tetris',
+    description: 'Full Tetris with SRS rotation, hold piece, T-spins, and Korobeiniki music',
+    icon: '🧱',
+    original_filename: 'tetris.html',
+    demoCategory: 'Demo Games',
+    get file_content() { return loadHtml('exampleAppsGames', 'tetris.html'); }
+  },
+  {
+    name: 'Pac-Man',
+    description: 'Arcade Pac-Man with authentic ghost AI, fruit bonuses, and energizer mechanics',
+    icon: '👾',
+    original_filename: 'pacman.html',
+    demoCategory: 'Demo Games',
+    get file_content() { return loadHtml('exampleAppsGames', 'pacman.html'); }
+  },
+  {
+    name: 'Flappy Bird',
+    description: 'Flappy Bird with parallax backgrounds, medals, day/night cycle',
+    icon: '🐦',
+    original_filename: 'flappybird.html',
+    demoCategory: 'Demo Games',
+    get file_content() { return loadHtml('exampleAppsGames', 'flappybird.html'); }
+  },
+  {
+    name: 'Dino Runner',
+    description: 'Chrome dino runner with parallax, power-ups, and achievements',
+    icon: '🦖',
+    original_filename: 'dinorunner.html',
+    demoCategory: 'Demo Games',
+    get file_content() { return loadHtml('exampleAppsGames', 'dinorunner.html'); }
+  },
+  {
+    name: 'Frogger',
+    description: 'Classic Frogger with animated vehicles, crocodiles, and diving turtles',
+    icon: '🐸',
+    original_filename: 'fogger.html',
+    demoCategory: 'Demo Games',
+    get file_content() { return loadHtml('exampleAppsGames', 'fogger.html'); }
+  },
+
+  // ── Demo Tools (demoCategory: 'Demo Tools') ─────────────────────────
+  {
+    name: 'Pomodoro Timer',
+    description: 'Productivity timer with focus/break cycles, stats, and task list',
+    icon: '🍅',
+    original_filename: 'pomodoro.html',
+    demoCategory: 'Demo Tools',
+    get file_content() { return loadHtml('exampleAppsGeneral', 'pomodoro.html'); }
+  },
+  {
+    name: 'Calculator',
+    description: 'Scientific calculator with history, memory, and keyboard support',
+    icon: '🧮',
+    original_filename: 'calculator.html',
+    demoCategory: 'Demo Tools',
+    get file_content() { return loadHtml('exampleAppsGeneral', 'calculator.html'); }
+  },
+  {
+    name: 'Notes',
+    description: 'Sticky notes app with colors, tags, markdown, and drag-and-drop',
+    icon: '📝',
+    original_filename: 'notes.html',
+    demoCategory: 'Demo Tools',
+    get file_content() { return loadHtml('exampleAppsGeneral', 'notes.html'); }
+  },
+  {
+    name: 'Unit Converter',
+    description: 'Convert between 10 unit categories with favorites and reference tables',
+    icon: '📐',
+    original_filename: 'converter.html',
+    demoCategory: 'Demo Tools',
+    get file_content() { return loadHtml('exampleAppsGeneral', 'converter.html'); }
+  },
+  {
+    name: 'Whiteboard',
+    description: 'Collaborative whiteboard with drawing tools',
+    icon: '🎨',
+    original_filename: 'whiteboard.html',
+    demoCategory: 'Demo Tools',
+    get file_content() { return loadHtml('exampleAppsGeneral', 'whiteboard.html'); }
   }
 ];
 
 async function seedDemoApps(client, workspaceId, userId) {
   for (let i = 0; i < DEMO_APPS.length; i++) {
     const app = DEMO_APPS[i];
+    const content = app.file_content;
     await client.query(
       `INSERT INTO apps (workspace_id, uploaded_by, name, description, icon,
-        file_content, original_filename, file_size, sort_order, visibility, is_demo)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'team', true)`,
+        file_content, original_filename, file_size, sort_order, visibility, is_demo, demo_category)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'team', true, $10)`,
       [
         workspaceId, userId, app.name, app.description, app.icon,
-        app.file_content, app.original_filename, Buffer.byteLength(app.file_content, 'utf-8'), i
+        content, app.original_filename, Buffer.byteLength(content, 'utf-8'), i,
+        app.demoCategory || null
       ]
     );
   }

@@ -170,6 +170,9 @@ const migrate = async () => {
     await client.query('ALTER TABLE apps ADD COLUMN IF NOT EXISTS is_demo BOOLEAN DEFAULT false');
     await client.query('CREATE INDEX IF NOT EXISTS idx_apps_is_demo ON apps(is_demo) WHERE is_demo = true');
 
+    // Demo category — groups demo apps into sections (e.g. 'Demo Games', 'Demo Tools')
+    await client.query('ALTER TABLE apps ADD COLUMN IF NOT EXISTS demo_category VARCHAR(50)');
+
     // Conversion logs for the tiered LLM converter
     await client.query(`
       CREATE TABLE IF NOT EXISTS conversion_logs (

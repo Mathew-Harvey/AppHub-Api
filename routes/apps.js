@@ -33,6 +33,7 @@ function formatApp(row) {
     sortOrder: row.sort_order,
     pendingDelete: row.pending_delete || false,
     isDemo: row.is_demo || false,
+    demoCategory: row.demo_category || null,
     originalFilename: row.original_filename,
     fileSize: row.file_size,
     uploadedBy: row.uploaded_by_name || null,
@@ -401,7 +402,7 @@ router.get('/', auth, async (req, res) => {
     const result = await pool.query(
       `SELECT DISTINCT a.id, a.name, a.description, a.icon, a.visibility,
               a.original_filename, a.file_size, a.sort_order, a.pending_delete,
-              a.is_demo, a.created_at, a.updated_at,
+              a.is_demo, a.demo_category, a.created_at, a.updated_at,
               u.display_name AS uploaded_by_name, u.email AS uploaded_by_email
        FROM apps a
        LEFT JOIN users u ON a.uploaded_by = u.id

@@ -1,0 +1,1303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Unit Converter</title>
+<style>
+:root {
+  --bg-primary: #f0f2f5;
+  --bg-card: rgba(255,255,255,0.82);
+  --bg-card-border: rgba(255,255,255,0.45);
+  --bg-input: #f7f8fa;
+  --bg-input-border: #e1e4e8;
+  --bg-pill: #e8ebef;
+  --bg-pill-active: #fff;
+  --bg-dropdown: #fff;
+  --bg-dropdown-hover: #f3f4f6;
+  --bg-toast: #1a1a2e;
+  --text-primary: #1a1a2e;
+  --text-secondary: #5a5f72;
+  --text-tertiary: #8b90a0;
+  --text-on-accent: #fff;
+  --accent: #6366f1;
+  --accent-light: #818cf8;
+  --accent-subtle: rgba(99,102,241,0.08);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
+  --shadow-md: 0 4px 24px rgba(0,0,0,0.08);
+  --shadow-lg: 0 12px 48px rgba(0,0,0,0.12);
+  --shadow-card: 0 8px 40px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.04);
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-pill: 50px;
+  --transition: 0.2s cubic-bezier(0.4,0,0.2,1);
+  --gradient-bg: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  --font: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+  --mono: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+}
+
+[data-theme="dark"] {
+  --bg-primary: #0f0f1a;
+  --bg-card: rgba(30,30,50,0.82);
+  --bg-card-border: rgba(60,60,90,0.35);
+  --bg-input: #1a1a30;
+  --bg-input-border: #2a2a45;
+  --bg-pill: #1e1e35;
+  --bg-pill-active: #2a2a48;
+  --bg-dropdown: #1a1a30;
+  --bg-dropdown-hover: #252540;
+  --bg-toast: #fff;
+  --text-primary: #e8e8f0;
+  --text-secondary: #a0a0b8;
+  --text-tertiary: #6a6a80;
+  --text-on-accent: #fff;
+  --accent: #818cf8;
+  --accent-light: #a5b4fc;
+  --accent-subtle: rgba(129,140,248,0.12);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.2);
+  --shadow-md: 0 4px 24px rgba(0,0,0,0.3);
+  --shadow-lg: 0 12px 48px rgba(0,0,0,0.4);
+  --shadow-card: 0 8px 40px rgba(0,0,0,0.3), 0 0 1px rgba(255,255,255,0.05);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: var(--font);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  transition: background var(--transition), color var(--transition);
+  overflow-x: hidden;
+}
+
+.bg-gradient {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  z-index: 0;
+  transition: opacity 0.6s ease;
+}
+.bg-gradient::before, .bg-gradient::after {
+  content: ''; position: absolute; border-radius: 50%;
+  filter: blur(80px); opacity: 0.18;
+  transition: all 0.8s ease;
+}
+.bg-gradient::before {
+  width: 600px; height: 600px; top: -150px; right: -100px;
+  background: var(--grad-c1, #6366f1);
+}
+.bg-gradient::after {
+  width: 500px; height: 500px; bottom: -100px; left: -80px;
+  background: var(--grad-c2, #a855f7);
+}
+[data-theme="dark"] .bg-gradient::before,
+[data-theme="dark"] .bg-gradient::after { opacity: 0.1; }
+
+.app {
+  position: relative; z-index: 1;
+  max-width: 640px; margin: 0 auto;
+  padding: 24px 16px 80px;
+  min-height: 100vh;
+}
+
+/* Header */
+.header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 20px;
+}
+.header h1 {
+  font-size: 22px; font-weight: 700;
+  background: linear-gradient(135deg, var(--accent), var(--accent-light));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.header-actions { display: flex; gap: 8px; }
+.icon-btn {
+  width: 38px; height: 38px; border: none; border-radius: var(--radius-sm);
+  background: var(--bg-pill); color: var(--text-secondary);
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  font-size: 18px; transition: all var(--transition);
+}
+.icon-btn:hover { background: var(--accent-subtle); color: var(--accent); }
+
+/* Category Pills */
+.categories {
+  display: flex; gap: 6px; overflow-x: auto; padding: 4px 0 12px;
+  scrollbar-width: none; -ms-overflow-style: none;
+}
+.categories::-webkit-scrollbar { display: none; }
+.cat-pill {
+  flex-shrink: 0; padding: 8px 14px; border-radius: var(--radius-pill);
+  border: 1.5px solid transparent; background: var(--bg-pill);
+  color: var(--text-secondary); font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: all var(--transition);
+  display: flex; align-items: center; gap: 5px; white-space: nowrap;
+  user-select: none;
+}
+.cat-pill:hover { background: var(--accent-subtle); color: var(--accent); }
+.cat-pill.active {
+  background: var(--accent); color: var(--text-on-accent);
+  border-color: var(--accent); box-shadow: 0 2px 12px rgba(99,102,241,0.3);
+}
+.cat-pill .emoji { font-size: 15px; }
+
+/* Card */
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--bg-card-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  padding: 24px;
+  margin-bottom: 16px;
+  transition: background var(--transition), border-color var(--transition);
+}
+
+/* Converter Section */
+.converter-section {
+  display: flex; flex-direction: column; gap: 0;
+  position: relative;
+}
+.unit-block { position: relative; }
+.unit-block + .unit-block { margin-top: 0; }
+.unit-label {
+  font-size: 12px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.5px; color: var(--text-tertiary); margin-bottom: 8px;
+}
+.input-row {
+  display: flex; gap: 10px; align-items: stretch;
+}
+.value-input {
+  flex: 1; padding: 14px 16px; border-radius: var(--radius-md);
+  border: 1.5px solid var(--bg-input-border); background: var(--bg-input);
+  color: var(--text-primary); font-size: 20px; font-weight: 600;
+  font-family: var(--font); outline: none;
+  transition: all var(--transition);
+}
+.value-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+}
+.value-input::placeholder { color: var(--text-tertiary); font-weight: 400; }
+
+/* Custom Select */
+.custom-select {
+  position: relative; min-width: 150px;
+}
+.select-trigger {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 14px 12px; border-radius: var(--radius-md);
+  border: 1.5px solid var(--bg-input-border); background: var(--bg-input);
+  color: var(--text-primary); font-size: 14px; font-weight: 500;
+  cursor: pointer; transition: all var(--transition);
+  height: 100%; white-space: nowrap;
+}
+.select-trigger:hover { border-color: var(--accent); }
+.select-trigger .arrow {
+  font-size: 10px; color: var(--text-tertiary);
+  transition: transform var(--transition);
+}
+.custom-select.open .select-trigger {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+}
+.custom-select.open .arrow { transform: rotate(180deg); }
+.select-dropdown {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+  background: var(--bg-dropdown); border: 1px solid var(--bg-input-border);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-lg);
+  z-index: 100; max-height: 240px; overflow-y: auto;
+  opacity: 0; transform: translateY(-4px); pointer-events: none;
+  transition: all 0.15s ease;
+}
+.custom-select.open .select-dropdown {
+  opacity: 1; transform: translateY(0); pointer-events: auto;
+}
+.select-search {
+  padding: 8px 10px; border: none; border-bottom: 1px solid var(--bg-input-border);
+  background: transparent; color: var(--text-primary); font-size: 13px;
+  width: 100%; outline: none; font-family: var(--font);
+}
+.select-option {
+  padding: 10px 12px; cursor: pointer; font-size: 13px;
+  transition: background 0.1s; color: var(--text-primary);
+}
+.select-option:hover { background: var(--bg-dropdown-hover); }
+.select-option.active {
+  background: var(--accent-subtle); color: var(--accent); font-weight: 600;
+}
+.select-option.hidden { display: none; }
+
+/* Swap Button */
+.swap-row {
+  display: flex; align-items: center; justify-content: center;
+  padding: 8px 0; position: relative; z-index: 2;
+}
+.swap-btn {
+  width: 40px; height: 40px; border-radius: 50%;
+  border: 2px solid var(--bg-input-border); background: var(--bg-card);
+  color: var(--accent); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; transition: all var(--transition);
+}
+.swap-btn:hover {
+  background: var(--accent); color: #fff;
+  border-color: var(--accent);
+  transform: rotate(180deg);
+  box-shadow: 0 4px 16px rgba(99,102,241,0.35);
+}
+
+/* Action Row */
+.action-row {
+  display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap;
+}
+.action-btn {
+  padding: 8px 14px; border-radius: var(--radius-pill);
+  border: 1.5px solid var(--bg-input-border); background: var(--bg-input);
+  color: var(--text-secondary); font-size: 12px; font-weight: 500;
+  cursor: pointer; transition: all var(--transition);
+  display: flex; align-items: center; gap: 5px;
+  font-family: var(--font);
+}
+.action-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-subtle); }
+.action-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* Formula Bar */
+.formula-bar {
+  margin-top: 16px; padding: 12px 16px;
+  background: var(--accent-subtle); border-radius: var(--radius-md);
+  font-size: 13px; color: var(--accent); font-weight: 500;
+  display: flex; align-items: center; gap: 8px;
+  transition: all var(--transition);
+}
+.formula-bar .icon { font-size: 16px; }
+
+/* Shortcuts */
+.shortcuts {
+  display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px;
+}
+.shortcut-btn {
+  padding: 6px 12px; border-radius: var(--radius-pill);
+  border: 1px solid var(--bg-input-border); background: var(--bg-input);
+  color: var(--text-secondary); font-size: 12px; cursor: pointer;
+  transition: all var(--transition); font-family: var(--font);
+}
+.shortcut-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-subtle); }
+
+/* Precision & SciNotation */
+.controls-row {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+}
+.control-group {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--text-tertiary);
+}
+.control-group select {
+  padding: 4px 8px; border-radius: 6px;
+  border: 1px solid var(--bg-input-border); background: var(--bg-input);
+  color: var(--text-primary); font-size: 12px; font-family: var(--font);
+  outline: none; cursor: pointer;
+}
+
+/* Convert All Panel */
+.convert-all-panel {
+  margin-top: 16px;
+  border-top: 1px solid var(--bg-input-border);
+  padding-top: 16px;
+  max-height: 0; overflow: hidden; opacity: 0;
+  transition: max-height 0.4s ease, opacity 0.3s ease, padding 0.3s ease;
+}
+.convert-all-panel.open {
+  max-height: 600px; opacity: 1;
+}
+.convert-all-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 8px;
+}
+.convert-all-item {
+  padding: 10px 12px; border-radius: var(--radius-sm);
+  background: var(--bg-input); border: 1px solid var(--bg-input-border);
+  transition: all var(--transition);
+}
+.convert-all-item:hover { border-color: var(--accent); }
+.convert-all-item .ca-value {
+  font-size: 15px; font-weight: 600; color: var(--text-primary);
+  font-family: var(--mono);
+}
+.convert-all-item .ca-unit {
+  font-size: 11px; color: var(--text-tertiary); margin-top: 2px;
+}
+
+/* Reference Table */
+.ref-table-panel {
+  margin-top: 16px;
+  border-top: 1px solid var(--bg-input-border);
+  padding-top: 16px;
+  max-height: 0; overflow: hidden; opacity: 0;
+  transition: max-height 0.4s ease, opacity 0.3s ease;
+}
+.ref-table-panel.open { max-height: 500px; opacity: 1; overflow-y: auto; }
+.ref-table {
+  width: 100%; border-collapse: collapse; font-size: 12px;
+}
+.ref-table th {
+  text-align: left; padding: 6px 8px; font-weight: 600;
+  color: var(--text-tertiary); border-bottom: 1px solid var(--bg-input-border);
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px;
+}
+.ref-table td {
+  padding: 6px 8px; border-bottom: 1px solid var(--bg-input-border);
+  font-family: var(--mono); font-size: 12px;
+}
+.ref-table tr:last-child td { border-bottom: none; }
+.ref-table tr:hover td { background: var(--accent-subtle); }
+
+/* History Panel */
+.history-card .history-title {
+  font-size: 14px; font-weight: 600; margin-bottom: 12px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.history-title .clear-btn {
+  font-size: 11px; color: var(--text-tertiary); cursor: pointer;
+  border: none; background: none; font-family: var(--font);
+  transition: color var(--transition);
+}
+.history-title .clear-btn:hover { color: #ef4444; }
+.history-list { display: flex; flex-direction: column; gap: 6px; }
+.history-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 12px; border-radius: var(--radius-sm);
+  background: var(--bg-input); cursor: pointer;
+  transition: all var(--transition); gap: 10px;
+}
+.history-item:hover { background: var(--accent-subtle); }
+.history-item .hi-text { font-size: 13px; font-weight: 500; flex: 1; min-width: 0; }
+.history-item .hi-cat {
+  font-size: 11px; color: var(--text-tertiary);
+  background: var(--bg-pill); padding: 2px 8px; border-radius: var(--radius-pill);
+  white-space: nowrap;
+}
+.hi-fav {
+  background: none; border: none; cursor: pointer;
+  font-size: 16px; color: var(--text-tertiary);
+  transition: all var(--transition); flex-shrink: 0;
+}
+.hi-fav:hover, .hi-fav.starred { color: #f59e0b; }
+
+/* Favorites */
+.favorites { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
+.fav-chip {
+  padding: 6px 12px; border-radius: var(--radius-pill);
+  background: linear-gradient(135deg, var(--accent), var(--accent-light));
+  color: #fff; font-size: 12px; font-weight: 500; cursor: pointer;
+  transition: all var(--transition); border: none; font-family: var(--font);
+  box-shadow: 0 2px 8px rgba(99,102,241,0.25);
+}
+.fav-chip:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(99,102,241,0.35); }
+
+/* Toast */
+.toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(80px);
+  background: var(--bg-toast); color: var(--bg-primary);
+  padding: 10px 20px; border-radius: var(--radius-pill);
+  font-size: 13px; font-weight: 500; z-index: 999;
+  opacity: 0; transition: all 0.3s ease;
+  pointer-events: none;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* Empty State */
+.empty-state {
+  text-align: center; padding: 20px; color: var(--text-tertiary);
+  font-size: 13px;
+}
+.empty-state .empty-icon { font-size: 32px; margin-bottom: 8px; }
+
+/* Responsive */
+@media (max-width: 480px) {
+  .app { padding: 16px 12px 80px; }
+  .card { padding: 18px; }
+  .value-input { font-size: 18px; padding: 12px 14px; }
+  .input-row { flex-direction: column; }
+  .custom-select { min-width: auto; }
+  .convert-all-grid { grid-template-columns: 1fr 1fr; }
+  .header h1 { font-size: 18px; }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--text-tertiary); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
+
+/* Number animation */
+@keyframes countPulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.02); }
+  100% { transform: scale(1); }
+}
+.pulse { animation: countPulse 0.2s ease; }
+</style>
+</head>
+<body>
+<div class="bg-gradient" id="bgGradient"></div>
+<div class="app">
+  <header class="header">
+    <h1>Unit Converter</h1>
+    <div class="header-actions">
+      <button class="icon-btn" id="themeToggle" title="Toggle dark mode">🌙</button>
+    </div>
+  </header>
+
+  <div class="categories" id="categories"></div>
+
+  <div class="favorites" id="favorites"></div>
+
+  <div class="shortcuts" id="shortcuts"></div>
+
+  <div class="card" id="mainCard">
+    <div class="converter-section">
+      <div class="unit-block">
+        <div class="unit-label">From</div>
+        <div class="input-row">
+          <input type="text" class="value-input" id="fromValue" placeholder="0" inputmode="decimal" autocomplete="off">
+          <div class="custom-select" id="fromSelect">
+            <div class="select-trigger" id="fromTrigger">
+              <span class="select-text">Select</span>
+              <span class="arrow">▼</span>
+            </div>
+            <div class="select-dropdown" id="fromDropdown">
+              <input type="text" class="select-search" placeholder="Search units…">
+              <div class="select-options"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="swap-row">
+        <button class="swap-btn" id="swapBtn" title="Swap units (Enter)">⇅</button>
+      </div>
+
+      <div class="unit-block">
+        <div class="unit-label">To</div>
+        <div class="input-row">
+          <input type="text" class="value-input" id="toValue" placeholder="0" inputmode="decimal" autocomplete="off">
+          <div class="custom-select" id="toSelect">
+            <div class="select-trigger" id="toTrigger">
+              <span class="select-text">Select</span>
+              <span class="arrow">▼</span>
+            </div>
+            <div class="select-dropdown" id="toDropdown">
+              <input type="text" class="select-search" placeholder="Search units…">
+              <div class="select-options"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="formula-bar" id="formulaBar">
+      <span class="icon">📐</span>
+      <span id="formulaText">Select units to see the conversion formula</span>
+    </div>
+
+    <div class="action-row">
+      <button class="action-btn" id="copyBtn">📋 Copy</button>
+      <button class="action-btn" id="convertAllBtn">📊 Convert All</button>
+      <button class="action-btn" id="refTableBtn">📖 Reference</button>
+      <button class="action-btn" id="favBtn">⭐ Favorite</button>
+      <div class="controls-row" style="margin-left:auto">
+        <div class="control-group">
+          <label>Precision</label>
+          <select id="precisionSelect">
+            <option value="0">0</option><option value="1">1</option>
+            <option value="2">2</option><option value="3">3</option>
+            <option value="4" selected>4</option><option value="5">5</option>
+            <option value="6">6</option><option value="7">7</option>
+            <option value="8">8</option>
+          </select>
+        </div>
+        <div class="control-group">
+          <label title="Scientific notation for extreme values">Sci</label>
+          <input type="checkbox" id="sciToggle">
+        </div>
+      </div>
+    </div>
+
+    <div class="convert-all-panel" id="convertAllPanel">
+      <div class="convert-all-grid" id="convertAllGrid"></div>
+    </div>
+
+    <div class="ref-table-panel" id="refTablePanel">
+      <table class="ref-table" id="refTable"></table>
+    </div>
+  </div>
+
+  <div class="card history-card" id="historyCard">
+    <div class="history-title">
+      <span>Recent Conversions</span>
+      <button class="clear-btn" id="clearHistory">Clear all</button>
+    </div>
+    <div class="history-list" id="historyList"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function() {
+"use strict";
+
+const CATEGORIES = [
+  {
+    id: "length", name: "Length", emoji: "📏",
+    colors: ["#6366f1","#8b5cf6"],
+    units: [
+      { id:"mm", name:"Millimeter", symbol:"mm", factor:0.001 },
+      { id:"cm", name:"Centimeter", symbol:"cm", factor:0.01 },
+      { id:"m",  name:"Meter", symbol:"m", factor:1 },
+      { id:"km", name:"Kilometer", symbol:"km", factor:1000 },
+      { id:"in", name:"Inch", symbol:"in", factor:0.0254 },
+      { id:"ft", name:"Foot", symbol:"ft", factor:0.3048 },
+      { id:"yd", name:"Yard", symbol:"yd", factor:0.9144 },
+      { id:"mi", name:"Mile", symbol:"mi", factor:1609.344 },
+      { id:"nmi",name:"Nautical Mile", symbol:"nmi", factor:1852 }
+    ]
+  },
+  {
+    id: "weight", name: "Weight", emoji: "⚖️",
+    colors: ["#ec4899","#f43f5e"],
+    units: [
+      { id:"mg", name:"Milligram", symbol:"mg", factor:0.000001 },
+      { id:"g",  name:"Gram", symbol:"g", factor:0.001 },
+      { id:"kg", name:"Kilogram", symbol:"kg", factor:1 },
+      { id:"tonne", name:"Tonne", symbol:"t", factor:1000 },
+      { id:"oz", name:"Ounce", symbol:"oz", factor:0.028349523125 },
+      { id:"lb", name:"Pound", symbol:"lb", factor:0.45359237 },
+      { id:"st", name:"Stone", symbol:"st", factor:6.35029318 }
+    ]
+  },
+  {
+    id: "temperature", name: "Temp", emoji: "🌡️",
+    colors: ["#f97316","#eab308"],
+    units: [
+      { id:"c", name:"Celsius", symbol:"°C", factor:null },
+      { id:"f", name:"Fahrenheit", symbol:"°F", factor:null },
+      { id:"k", name:"Kelvin", symbol:"K", factor:null }
+    ],
+    custom: true
+  },
+  {
+    id: "volume", name: "Volume", emoji: "🧪",
+    colors: ["#06b6d4","#3b82f6"],
+    units: [
+      { id:"ml",  name:"Milliliter", symbol:"mL", factor:0.001 },
+      { id:"l",   name:"Liter", symbol:"L", factor:1 },
+      { id:"gal_us", name:"Gallon (US)", symbol:"gal", factor:3.785411784 },
+      { id:"gal_uk", name:"Gallon (UK)", symbol:"gal UK", factor:4.54609 },
+      { id:"cup", name:"Cup", symbol:"cup", factor:0.236588 },
+      { id:"tbsp",name:"Tablespoon", symbol:"tbsp", factor:0.0147868 },
+      { id:"tsp", name:"Teaspoon", symbol:"tsp", factor:0.00492892 },
+      { id:"floz",name:"Fluid Ounce", symbol:"fl oz", factor:0.0295735 },
+      { id:"pt",  name:"Pint", symbol:"pt", factor:0.473176 },
+      { id:"qt",  name:"Quart", symbol:"qt", factor:0.946353 }
+    ]
+  },
+  {
+    id: "speed", name: "Speed", emoji: "🚀",
+    colors: ["#10b981","#14b8a6"],
+    units: [
+      { id:"ms",  name:"Meters/sec", symbol:"m/s", factor:1 },
+      { id:"kmh", name:"Km/hour", symbol:"km/h", factor:0.277778 },
+      { id:"mph", name:"Miles/hour", symbol:"mph", factor:0.44704 },
+      { id:"kn",  name:"Knots", symbol:"kn", factor:0.514444 },
+      { id:"fts", name:"Feet/sec", symbol:"ft/s", factor:0.3048 }
+    ]
+  },
+  {
+    id: "area", name: "Area", emoji: "📐",
+    colors: ["#8b5cf6","#a855f7"],
+    units: [
+      { id:"mm2", name:"mm²", symbol:"mm²", factor:0.000001 },
+      { id:"cm2", name:"cm²", symbol:"cm²", factor:0.0001 },
+      { id:"m2",  name:"m²", symbol:"m²", factor:1 },
+      { id:"km2", name:"km²", symbol:"km²", factor:1000000 },
+      { id:"ha",  name:"Hectare", symbol:"ha", factor:10000 },
+      { id:"ac",  name:"Acre", symbol:"ac", factor:4046.8564224 },
+      { id:"ft2", name:"ft²", symbol:"ft²", factor:0.09290304 },
+      { id:"yd2", name:"yd²", symbol:"yd²", factor:0.83612736 },
+      { id:"mi2", name:"mi²", symbol:"mi²", factor:2589988.110336 }
+    ]
+  },
+  {
+    id: "time", name: "Time", emoji: "⏱️",
+    colors: ["#f59e0b","#d97706"],
+    units: [
+      { id:"ms_t",  name:"Millisecond", symbol:"ms", factor:0.001 },
+      { id:"s",   name:"Second", symbol:"s", factor:1 },
+      { id:"min", name:"Minute", symbol:"min", factor:60 },
+      { id:"hr",  name:"Hour", symbol:"hr", factor:3600 },
+      { id:"day", name:"Day", symbol:"day", factor:86400 },
+      { id:"wk",  name:"Week", symbol:"wk", factor:604800 },
+      { id:"mo",  name:"Month", symbol:"mo", factor:2629746 },
+      { id:"yr",  name:"Year", symbol:"yr", factor:31556952 }
+    ]
+  },
+  {
+    id: "digital", name: "Storage", emoji: "💾",
+    colors: ["#64748b","#475569"],
+    units: [
+      { id:"bit",name:"Bit", symbol:"bit", factor:1 },
+      { id:"byte",name:"Byte", symbol:"B", factor:8 },
+      { id:"kb", name:"Kilobyte", symbol:"KB", factor:8192 },
+      { id:"mb", name:"Megabyte", symbol:"MB", factor:8388608 },
+      { id:"gb", name:"Gigabyte", symbol:"GB", factor:8589934592 },
+      { id:"tb", name:"Terabyte", symbol:"TB", factor:8796093022208 },
+      { id:"pb", name:"Petabyte", symbol:"PB", factor:9007199254740992 }
+    ]
+  },
+  {
+    id: "pressure", name: "Pressure", emoji: "🌀",
+    colors: ["#0ea5e9","#2563eb"],
+    units: [
+      { id:"pa",  name:"Pascal", symbol:"Pa", factor:1 },
+      { id:"kpa", name:"Kilopascal", symbol:"kPa", factor:1000 },
+      { id:"bar", name:"Bar", symbol:"bar", factor:100000 },
+      { id:"atm", name:"Atmosphere", symbol:"atm", factor:101325 },
+      { id:"psi", name:"PSI", symbol:"psi", factor:6894.757 },
+      { id:"mmhg",name:"mmHg", symbol:"mmHg", factor:133.322 }
+    ]
+  },
+  {
+    id: "energy", name: "Energy", emoji: "⚡",
+    colors: ["#eab308","#f97316"],
+    units: [
+      { id:"j",   name:"Joule", symbol:"J", factor:1 },
+      { id:"kj",  name:"Kilojoule", symbol:"kJ", factor:1000 },
+      { id:"cal", name:"Calorie", symbol:"cal", factor:4.184 },
+      { id:"kcal",name:"Kilocalorie", symbol:"kcal", factor:4184 },
+      { id:"wh",  name:"Watt-hour", symbol:"Wh", factor:3600 },
+      { id:"kwh", name:"Kilowatt-hour", symbol:"kWh", factor:3600000 },
+      { id:"btu", name:"BTU", symbol:"BTU", factor:1055.06 }
+    ]
+  }
+];
+
+const COMMON_SHORTCUTS = [
+  { cat:"length", from:"km", to:"mi", label:"km ↔ mi" },
+  { cat:"length", from:"cm", to:"in", label:"cm ↔ in" },
+  { cat:"weight", from:"kg", to:"lb", label:"kg ↔ lbs" },
+  { cat:"temperature", from:"c", to:"f", label:"°C ↔ °F" },
+  { cat:"volume", from:"l", to:"gal_us", label:"L ↔ gal" },
+  { cat:"speed", from:"kmh", to:"mph", label:"km/h ↔ mph" },
+  { cat:"digital", from:"gb", to:"mb", label:"GB ↔ MB" },
+  { cat:"energy", from:"kcal", to:"kj", label:"kcal ↔ kJ" }
+];
+
+let state = {
+  category: "length",
+  fromUnit: "km",
+  toUnit: "mi",
+  fromValue: "",
+  toValue: "",
+  lastEdited: "from",
+  precision: 4,
+  sciNotation: false,
+  convertAllOpen: false,
+  refTableOpen: false,
+  history: [],
+  favorites: []
+};
+
+const $ = s => document.querySelector(s);
+const $$ = s => document.querySelectorAll(s);
+
+function loadState() {
+  try {
+    const h = localStorage.getItem("uc_history");
+    if (h) state.history = JSON.parse(h);
+    const f = localStorage.getItem("uc_favorites");
+    if (f) state.favorites = JSON.parse(f);
+    const t = localStorage.getItem("uc_theme");
+    if (t) document.documentElement.setAttribute("data-theme", t);
+    const p = localStorage.getItem("uc_precision");
+    if (p !== null) state.precision = parseInt(p);
+  } catch(e) {}
+}
+
+function saveHistory() {
+  try {
+    localStorage.setItem("uc_history", JSON.stringify(state.history.slice(0, 10)));
+  } catch(e) {}
+}
+function saveFavorites() {
+  try {
+    localStorage.setItem("uc_favorites", JSON.stringify(state.favorites));
+  } catch(e) {}
+}
+
+function getCat() {
+  return CATEGORIES.find(c => c.id === state.category);
+}
+function getUnit(cat, id) {
+  return cat.units.find(u => u.id === id);
+}
+
+/* Temperature conversions */
+function convertTemp(value, from, to) {
+  if (from === to) return value;
+  let celsius;
+  if (from === "c") celsius = value;
+  else if (from === "f") celsius = (value - 32) * 5/9;
+  else celsius = value - 273.15;
+
+  if (to === "c") return celsius;
+  if (to === "f") return celsius * 9/5 + 32;
+  return celsius + 273.15;
+}
+
+function convert(value, fromId, toId, cat) {
+  if (isNaN(value) || value === "") return "";
+  const v = parseFloat(value);
+  if (cat.custom) return convertTemp(v, fromId, toId);
+  const fromUnit = getUnit(cat, fromId);
+  const toUnit = getUnit(cat, toId);
+  if (!fromUnit || !toUnit) return "";
+  return (v * fromUnit.factor) / toUnit.factor;
+}
+
+function formatNumber(val) {
+  if (val === "" || isNaN(val)) return "";
+  const n = parseFloat(val);
+  const prec = state.precision;
+  if (state.sciNotation && (Math.abs(n) >= 1e9 || (Math.abs(n) < 0.0001 && n !== 0))) {
+    return n.toExponential(prec);
+  }
+  const fixed = parseFloat(n.toFixed(prec));
+  const parts = fixed.toString().split(".");
+  parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return parts.join(".");
+}
+
+function doConvert(direction) {
+  const cat = getCat();
+  if (!cat) return;
+  if (direction === "from") {
+    const raw = convert(state.fromValue, state.fromUnit, state.toUnit, cat);
+    state.toValue = raw === "" ? "" : formatNumber(raw);
+    state.lastEdited = "from";
+  } else {
+    const raw = convert(state.toValue, state.toUnit, state.fromUnit, cat);
+    state.fromValue = raw === "" ? "" : formatNumber(raw);
+    state.lastEdited = "to";
+  }
+}
+
+function pulseEl(el) {
+  el.classList.remove("pulse");
+  void el.offsetWidth;
+  el.classList.add("pulse");
+}
+
+function showToast(msg) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove("show"), 2000);
+}
+
+/* Render Categories */
+function renderCategories() {
+  const container = $("#categories");
+  container.innerHTML = CATEGORIES.map(c =>
+    `<button class="cat-pill${c.id === state.category ? " active" : ""}" data-cat="${c.id}">
+      <span class="emoji">${c.emoji}</span>${c.name}
+    </button>`
+  ).join("");
+  container.querySelectorAll(".cat-pill").forEach(btn => {
+    btn.addEventListener("click", () => {
+      state.category = btn.dataset.cat;
+      const cat = getCat();
+      state.fromUnit = cat.units[0].id;
+      state.toUnit = cat.units.length > 1 ? cat.units[1].id : cat.units[0].id;
+      state.fromValue = "";
+      state.toValue = "";
+      state.convertAllOpen = false;
+      state.refTableOpen = false;
+      renderAll();
+    });
+  });
+}
+
+/* Render Select Dropdowns */
+function renderSelect(selectEl, units, selectedId, onChange) {
+  const trigger = selectEl.querySelector(".select-trigger .select-text");
+  const dropdown = selectEl.querySelector(".select-dropdown");
+  const search = dropdown.querySelector(".select-search");
+  const optionsContainer = dropdown.querySelector(".select-options");
+
+  const selectedUnit = units.find(u => u.id === selectedId);
+  trigger.textContent = selectedUnit ? `${selectedUnit.symbol} — ${selectedUnit.name}` : "Select";
+
+  optionsContainer.innerHTML = units.map(u =>
+    `<div class="select-option${u.id === selectedId ? " active" : ""}" data-id="${u.id}">${u.symbol} — ${u.name}</div>`
+  ).join("");
+
+  const triggerEl = selectEl.querySelector(".select-trigger");
+  const newTrigger = triggerEl.cloneNode(true);
+  triggerEl.parentNode.replaceChild(newTrigger, triggerEl);
+  newTrigger.addEventListener("click", (e) => {
+    e.stopPropagation();
+    closeAllSelects();
+    selectEl.classList.toggle("open");
+    if (selectEl.classList.contains("open")) {
+      search.value = "";
+      filterOptions(search, optionsContainer);
+      setTimeout(() => search.focus(), 50);
+    }
+  });
+
+  search.oninput = () => filterOptions(search, optionsContainer);
+
+  optionsContainer.querySelectorAll(".select-option").forEach(opt => {
+    opt.addEventListener("click", () => {
+      onChange(opt.dataset.id);
+      selectEl.classList.remove("open");
+    });
+  });
+}
+
+function filterOptions(searchEl, container) {
+  const q = searchEl.value.toLowerCase();
+  container.querySelectorAll(".select-option").forEach(opt => {
+    opt.classList.toggle("hidden", !opt.textContent.toLowerCase().includes(q));
+  });
+}
+
+function closeAllSelects() {
+  $$(".custom-select").forEach(s => s.classList.remove("open"));
+}
+
+/* Render Converter */
+function renderConverter() {
+  const cat = getCat();
+  if (!cat) return;
+
+  renderSelect($("#fromSelect"), cat.units, state.fromUnit, id => {
+    state.fromUnit = id;
+    doConvert("from");
+    renderAll();
+  });
+
+  renderSelect($("#toSelect"), cat.units, state.toUnit, id => {
+    state.toUnit = id;
+    doConvert("from");
+    renderAll();
+  });
+
+  const fromInput = $("#fromValue");
+  const toInput = $("#toValue");
+
+  fromInput.value = state.fromValue;
+  toInput.value = state.toValue;
+
+  updateFormula();
+  updateGradient();
+}
+
+function updateFormula() {
+  const cat = getCat();
+  const fromU = getUnit(cat, state.fromUnit);
+  const toU = getUnit(cat, state.toUnit);
+  if (!fromU || !toU) return;
+
+  const result = convert(1, state.fromUnit, state.toUnit, cat);
+  const formatted = formatNumber(result);
+  $("#formulaText").textContent = `1 ${fromU.symbol} = ${formatted} ${toU.symbol}`;
+}
+
+function updateGradient() {
+  const cat = getCat();
+  const bg = $("#bgGradient");
+  bg.style.setProperty("--grad-c1", cat.colors[0]);
+  bg.style.setProperty("--grad-c2", cat.colors[1]);
+}
+
+/* Shortcuts */
+function renderShortcuts() {
+  const container = $("#shortcuts");
+  container.innerHTML = COMMON_SHORTCUTS.map(s =>
+    `<button class="shortcut-btn" data-cat="${s.cat}" data-from="${s.from}" data-to="${s.to}">${s.label}</button>`
+  ).join("");
+  container.querySelectorAll(".shortcut-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      state.category = btn.dataset.cat;
+      state.fromUnit = btn.dataset.from;
+      state.toUnit = btn.dataset.to;
+      state.fromValue = state.fromValue || "1";
+      doConvert("from");
+      renderAll();
+    });
+  });
+}
+
+/* Favorites */
+function renderFavorites() {
+  const container = $("#favorites");
+  if (!state.favorites.length) { container.innerHTML = ""; return; }
+  container.innerHTML = state.favorites.map((f, i) =>
+    `<button class="fav-chip" data-idx="${i}">${f.label}</button>`
+  ).join("");
+  container.querySelectorAll(".fav-chip").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const f = state.favorites[parseInt(btn.dataset.idx)];
+      state.category = f.cat;
+      state.fromUnit = f.from;
+      state.toUnit = f.to;
+      state.fromValue = state.fromValue || "1";
+      doConvert("from");
+      renderAll();
+    });
+  });
+}
+
+/* History */
+function addToHistory() {
+  if (!state.fromValue && !state.toValue) return;
+  const cat = getCat();
+  const fromU = getUnit(cat, state.fromUnit);
+  const toU = getUnit(cat, state.toUnit);
+  if (!fromU || !toU) return;
+
+  const entry = {
+    cat: state.category,
+    catName: cat.name,
+    from: state.fromUnit,
+    to: state.toUnit,
+    fromVal: state.fromValue,
+    toVal: state.toValue,
+    label: `${state.fromValue} ${fromU.symbol} → ${state.toValue} ${toU.symbol}`
+  };
+
+  state.history = state.history.filter(h =>
+    !(h.cat === entry.cat && h.from === entry.from && h.to === entry.to && h.fromVal === entry.fromVal)
+  );
+  state.history.unshift(entry);
+  if (state.history.length > 10) state.history.pop();
+  saveHistory();
+}
+
+function renderHistory() {
+  const container = $("#historyList");
+  if (!state.history.length) {
+    container.innerHTML = '<div class="empty-state"><div class="empty-icon">🕐</div>No recent conversions</div>';
+    return;
+  }
+  container.innerHTML = state.history.map((h, i) => {
+    const isFav = state.favorites.some(f => f.cat === h.cat && f.from === h.from && f.to === h.to);
+    return `<div class="history-item" data-idx="${i}">
+      <span class="hi-text">${h.label}</span>
+      <span class="hi-cat">${h.catName}</span>
+      <button class="hi-fav${isFav ? " starred" : ""}" data-idx="${i}" title="Toggle favorite">★</button>
+    </div>`;
+  }).join("");
+
+  container.querySelectorAll(".history-item").forEach(item => {
+    item.addEventListener("click", (e) => {
+      if (e.target.classList.contains("hi-fav")) return;
+      const h = state.history[parseInt(item.dataset.idx)];
+      state.category = h.cat;
+      state.fromUnit = h.from;
+      state.toUnit = h.to;
+      state.fromValue = h.fromVal;
+      state.toValue = h.toVal;
+      renderAll();
+    });
+  });
+
+  container.querySelectorAll(".hi-fav").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const h = state.history[parseInt(btn.dataset.idx)];
+      toggleFavorite(h);
+    });
+  });
+}
+
+function toggleFavorite(h) {
+  const cat = CATEGORIES.find(c => c.id === h.cat);
+  const fromU = getUnit(cat, h.from);
+  const toU = getUnit(cat, h.to);
+  const idx = state.favorites.findIndex(f => f.cat === h.cat && f.from === h.from && f.to === h.to);
+  if (idx >= 0) {
+    state.favorites.splice(idx, 1);
+  } else {
+    state.favorites.push({
+      cat: h.cat, from: h.from, to: h.to,
+      label: `${fromU.symbol} ↔ ${toU.symbol}`
+    });
+  }
+  saveFavorites();
+  renderFavorites();
+  renderHistory();
+}
+
+/* Convert All */
+function renderConvertAll() {
+  const panel = $("#convertAllPanel");
+  const grid = $("#convertAllGrid");
+  const btn = $("#convertAllBtn");
+  panel.classList.toggle("open", state.convertAllOpen);
+  btn.classList.toggle("active", state.convertAllOpen);
+
+  if (!state.convertAllOpen) return;
+
+  const cat = getCat();
+  const sourceValue = state.lastEdited === "from" ? state.fromValue : state.toValue;
+  const sourceUnit = state.lastEdited === "from" ? state.fromUnit : state.toUnit;
+  const val = parseFloat(sourceValue);
+
+  if (isNaN(val)) {
+    grid.innerHTML = '<div class="empty-state">Enter a value to see all conversions</div>';
+    return;
+  }
+
+  grid.innerHTML = cat.units.filter(u => u.id !== sourceUnit).map(u => {
+    const result = convert(val, sourceUnit, u.id, cat);
+    return `<div class="convert-all-item">
+      <div class="ca-value">${formatNumber(result)}</div>
+      <div class="ca-unit">${u.symbol} — ${u.name}</div>
+    </div>`;
+  }).join("");
+}
+
+/* Reference Table */
+function renderRefTable() {
+  const panel = $("#refTablePanel");
+  const table = $("#refTable");
+  const btn = $("#refTableBtn");
+  panel.classList.toggle("open", state.refTableOpen);
+  btn.classList.toggle("active", state.refTableOpen);
+
+  if (!state.refTableOpen) return;
+
+  const cat = getCat();
+  const baseUnit = cat.units.find(u => u.factor === 1) || cat.units[0];
+
+  if (cat.custom) {
+    const temps = [
+      { c: -40, f: -40, k: 233.15 },
+      { c: 0, f: 32, k: 273.15 },
+      { c: 20, f: 68, k: 293.15 },
+      { c: 37, f: 98.6, k: 310.15 },
+      { c: 100, f: 212, k: 373.15 }
+    ];
+    table.innerHTML = `<thead><tr><th>°C</th><th>°F</th><th>K</th></tr></thead><tbody>` +
+      temps.map(t => `<tr><td>${t.c}</td><td>${t.f}</td><td>${t.k}</td></tr>`).join("") +
+      `</tbody>`;
+    return;
+  }
+
+  const sampleValues = [0.001, 0.01, 0.1, 1, 10, 100, 1000];
+  const displayUnits = cat.units.slice(0, 5);
+
+  table.innerHTML = `<thead><tr><th>${baseUnit.symbol}</th>` +
+    displayUnits.filter(u => u.id !== baseUnit.id).map(u => `<th>${u.symbol}</th>`).join("") +
+    `</tr></thead><tbody>` +
+    sampleValues.map(v => {
+      return `<tr><td>${formatNumber(v)}</td>` +
+        displayUnits.filter(u => u.id !== baseUnit.id).map(u => {
+          const r = convert(v, baseUnit.id, u.id, cat);
+          return `<td>${formatNumber(r)}</td>`;
+        }).join("") + `</tr>`;
+    }).join("") + `</tbody>`;
+}
+
+/* Theme */
+function initTheme() {
+  const current = document.documentElement.getAttribute("data-theme");
+  updateThemeIcon(current === "dark");
+}
+
+function toggleTheme() {
+  const isDark = document.documentElement.getAttribute("data-theme") === "dark";
+  const newTheme = isDark ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", newTheme);
+  localStorage.setItem("uc_theme", newTheme);
+  updateThemeIcon(!isDark);
+}
+
+function updateThemeIcon(isDark) {
+  $("#themeToggle").textContent = isDark ? "☀️" : "🌙";
+}
+
+/* Events */
+function bindEvents() {
+  const fromInput = $("#fromValue");
+  const toInput = $("#toValue");
+
+  fromInput.addEventListener("input", () => {
+    const val = fromInput.value.replace(/[^0-9.\-eE]/g, "");
+    state.fromValue = val;
+    doConvert("from");
+    toInput.value = state.toValue;
+    pulseEl(toInput);
+    renderConvertAll();
+  });
+
+  toInput.addEventListener("input", () => {
+    const val = toInput.value.replace(/[^0-9.\-eE]/g, "");
+    state.toValue = val;
+    doConvert("to");
+    fromInput.value = state.fromValue;
+    pulseEl(fromInput);
+    renderConvertAll();
+  });
+
+  fromInput.addEventListener("blur", () => { addToHistory(); renderHistory(); });
+  toInput.addEventListener("blur", () => { addToHistory(); renderHistory(); });
+
+  $("#swapBtn").addEventListener("click", swapUnits);
+
+  $("#copyBtn").addEventListener("click", () => {
+    const cat = getCat();
+    const fromU = getUnit(cat, state.fromUnit);
+    const toU = getUnit(cat, state.toUnit);
+    const text = `${state.fromValue} ${fromU.symbol} = ${state.toValue} ${toU.symbol}`;
+    navigator.clipboard.writeText(text).then(() => showToast("Copied to clipboard!"));
+  });
+
+  $("#convertAllBtn").addEventListener("click", () => {
+    state.convertAllOpen = !state.convertAllOpen;
+    renderConvertAll();
+  });
+
+  $("#refTableBtn").addEventListener("click", () => {
+    state.refTableOpen = !state.refTableOpen;
+    renderRefTable();
+  });
+
+  $("#favBtn").addEventListener("click", () => {
+    const cat = getCat();
+    const entry = {
+      cat: state.category,
+      from: state.fromUnit,
+      to: state.toUnit,
+      label: `${getUnit(cat, state.fromUnit).symbol} ↔ ${getUnit(cat, state.toUnit).symbol}`
+    };
+    const idx = state.favorites.findIndex(f => f.cat === entry.cat && f.from === entry.from && f.to === entry.to);
+    if (idx >= 0) {
+      state.favorites.splice(idx, 1);
+      showToast("Removed from favorites");
+    } else {
+      state.favorites.push(entry);
+      showToast("Added to favorites!");
+    }
+    saveFavorites();
+    renderFavorites();
+    updateFavBtn();
+  });
+
+  $("#clearHistory").addEventListener("click", () => {
+    state.history = [];
+    saveHistory();
+    renderHistory();
+    showToast("History cleared");
+  });
+
+  $("#themeToggle").addEventListener("click", toggleTheme);
+
+  $("#precisionSelect").addEventListener("change", (e) => {
+    state.precision = parseInt(e.target.value);
+    localStorage.setItem("uc_precision", state.precision);
+    doConvert(state.lastEdited === "from" ? "from" : "to");
+    updateInputs();
+    updateFormula();
+    renderConvertAll();
+    renderRefTable();
+  });
+
+  $("#sciToggle").addEventListener("change", (e) => {
+    state.sciNotation = e.target.checked;
+    doConvert(state.lastEdited === "from" ? "from" : "to");
+    updateInputs();
+    updateFormula();
+    renderConvertAll();
+    renderRefTable();
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".custom-select")) closeAllSelects();
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.target.classList.contains("select-search")) {
+      swapUnits();
+    }
+    if (e.key === "Escape") closeAllSelects();
+  });
+}
+
+function swapUnits() {
+  const tmp = state.fromUnit;
+  state.fromUnit = state.toUnit;
+  state.toUnit = tmp;
+  const tmpVal = state.fromValue;
+  state.fromValue = state.toValue;
+  state.toValue = tmpVal;
+  state.lastEdited = state.lastEdited === "from" ? "to" : "from";
+
+  const swapBtn = $("#swapBtn");
+  swapBtn.style.transition = "transform 0.3s ease";
+  swapBtn.style.transform = "rotate(180deg)";
+  setTimeout(() => { swapBtn.style.transform = ""; }, 300);
+
+  renderAll();
+}
+
+function updateInputs() {
+  $("#fromValue").value = state.fromValue;
+  $("#toValue").value = state.toValue;
+}
+
+function updateFavBtn() {
+  const btn = $("#favBtn");
+  const isFav = state.favorites.some(f => f.cat === state.category && f.from === state.fromUnit && f.to === state.toUnit);
+  btn.classList.toggle("active", isFav);
+  btn.innerHTML = isFav ? "★ Favorited" : "⭐ Favorite";
+}
+
+function renderAll() {
+  renderCategories();
+  renderConverter();
+  renderFavorites();
+  renderHistory();
+  renderConvertAll();
+  renderRefTable();
+  updateFavBtn();
+  $("#precisionSelect").value = state.precision;
+  $("#sciToggle").checked = state.sciNotation;
+}
+
+/* Init */
+function init() {
+  loadState();
+  initTheme();
+  renderAll();
+  renderShortcuts();
+  bindEvents();
+
+  if (window.matchMedia && !localStorage.getItem("uc_theme")) {
+    if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
+      document.documentElement.setAttribute("data-theme", "dark");
+      updateThemeIcon(true);
+    }
+  }
+}
+
+init();
+})();
+</script>
+</body>
+</html>

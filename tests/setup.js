@@ -88,6 +88,7 @@ async function migrate() {
         visibility VARCHAR(20) DEFAULT 'team' CHECK (visibility IN ('private', 'team', 'specific')),
         is_active BOOLEAN DEFAULT true,
         is_demo BOOLEAN DEFAULT false,
+        demo_category VARCHAR(50),
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
       )

@@ -1,0 +1,1298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>25:00 - Focus | Pomodoro</title>
+    <link id="favicon" rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='%23e74c3c'/></svg>">
+    <style>
+        :root {
+            --bg-primary: #0f0f13;
+            --bg-secondary: #1a1a24;
+            --bg-tertiary: #24243a;
+            --text-primary: #f0f0f5;
+            --text-secondary: #9090a8;
+            --text-muted: #5a5a72;
+            --border: #2a2a40;
+            --focus: #e74c3c;
+            --focus-glow: rgba(231, 76, 60, 0.25);
+            --short-break: #2ecc71;
+            --short-break-glow: rgba(46, 204, 113, 0.25);
+            --long-break: #3498db;
+            --long-break-glow: rgba(52, 152, 219, 0.25);
+            --accent: var(--focus);
+            --accent-glow: var(--focus-glow);
+            --ring-track: #2a2a40;
+            --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+            --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+            --shadow-lg: 0 8px 32px rgba(0,0,0,0.5);
+            --radius-sm: 8px;
+            --radius-md: 12px;
+            --radius-lg: 16px;
+            --transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .light-theme {
+            --bg-primary: #f5f5fa;
+            --bg-secondary: #ffffff;
+            --bg-tertiary: #eeeef4;
+            --text-primary: #1a1a2e;
+            --text-secondary: #5a5a72;
+            --text-muted: #9090a8;
+            --border: #dddde8;
+            --ring-track: #dddde8;
+            --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
+            --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
+            --shadow-lg: 0 8px 32px rgba(0,0,0,0.12);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            transition: background var(--transition), color var(--transition);
+            overflow-x: hidden;
+        }
+
+        .bg-gradient {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            opacity: 0.5;
+            transition: background 1s ease;
+            pointer-events: none;
+        }
+        .bg-gradient.focus-phase { background: radial-gradient(ellipse at 50% 30%, rgba(231,76,60,0.08) 0%, transparent 70%); }
+        .bg-gradient.short-break-phase { background: radial-gradient(ellipse at 50% 30%, rgba(46,204,113,0.08) 0%, transparent 70%); }
+        .bg-gradient.long-break-phase { background: radial-gradient(ellipse at 50% 30%, rgba(52,152,219,0.08) 0%, transparent 70%); }
+
+        .light-theme .bg-gradient.focus-phase { background: radial-gradient(ellipse at 50% 30%, rgba(231,76,60,0.06) 0%, transparent 70%); }
+        .light-theme .bg-gradient.short-break-phase { background: radial-gradient(ellipse at 50% 30%, rgba(46,204,113,0.06) 0%, transparent 70%); }
+        .light-theme .bg-gradient.long-break-phase { background: radial-gradient(ellipse at 50% 30%, rgba(52,152,219,0.06) 0%, transparent 70%); }
+
+        .app {
+            position: relative;
+            z-index: 1;
+            max-width: 480px;
+            margin: 0 auto;
+            padding: 24px 20px 40px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .header h1 {
+            font-size: 20px;
+            font-weight: 700;
+            letter-spacing: -0.3px;
+        }
+        .header-actions { display: flex; gap: 6px; }
+
+        .icon-btn {
+            width: 36px; height: 36px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all var(--transition);
+            font-size: 16px;
+        }
+        .icon-btn:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border-color: var(--text-muted);
+        }
+
+        /* Phase Tabs */
+        .phase-tabs {
+            display: flex;
+            gap: 4px;
+            background: var(--bg-secondary);
+            border-radius: var(--radius-md);
+            padding: 4px;
+            margin-bottom: 32px;
+            border: 1px solid var(--border);
+        }
+        .phase-tab {
+            flex: 1;
+            padding: 8px 12px;
+            border: none;
+            border-radius: var(--radius-sm);
+            background: transparent;
+            color: var(--text-muted);
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all var(--transition);
+        }
+        .phase-tab:hover { color: var(--text-secondary); }
+        .phase-tab.active {
+            background: var(--accent);
+            color: #fff;
+            box-shadow: 0 2px 8px var(--accent-glow);
+        }
+
+        /* Timer Circle */
+        .timer-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-bottom: 32px;
+        }
+        .timer-ring-wrap {
+            position: relative;
+            width: 260px;
+            height: 260px;
+        }
+        .timer-ring-wrap svg {
+            width: 100%;
+            height: 100%;
+            transform: rotate(-90deg);
+        }
+        .ring-track {
+            fill: none;
+            stroke: var(--ring-track);
+            stroke-width: 6;
+        }
+        .ring-progress {
+            fill: none;
+            stroke: var(--accent);
+            stroke-width: 6;
+            stroke-linecap: round;
+            transition: stroke-dashoffset 0.5s linear, stroke var(--transition);
+            filter: drop-shadow(0 0 6px var(--accent-glow));
+        }
+        .ring-glow {
+            fill: none;
+            stroke: var(--accent);
+            stroke-width: 12;
+            stroke-linecap: round;
+            opacity: 0.15;
+            transition: stroke-dashoffset 0.5s linear, stroke var(--transition);
+        }
+        .timer-inner {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        .phase-label {
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            color: var(--accent);
+            margin-bottom: 4px;
+            transition: color var(--transition);
+        }
+        .timer-display {
+            font-size: 64px;
+            font-weight: 200;
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -2px;
+            line-height: 1;
+        }
+        .timer-sub {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 6px;
+        }
+
+        /* Session Dots */
+        .session-dots {
+            display: flex;
+            gap: 8px;
+            margin-top: 16px;
+        }
+        .session-dot {
+            width: 12px; height: 12px;
+            border-radius: 50%;
+            border: 2px solid var(--accent);
+            transition: all var(--transition);
+        }
+        .session-dot.filled {
+            background: var(--accent);
+            box-shadow: 0 0 8px var(--accent-glow);
+        }
+
+        /* Controls */
+        .controls {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            margin-bottom: 32px;
+        }
+        .btn {
+            padding: 12px 28px;
+            border: none;
+            border-radius: var(--radius-md);
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all var(--transition);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .btn-primary {
+            background: var(--accent);
+            color: #fff;
+            box-shadow: 0 4px 16px var(--accent-glow);
+        }
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 24px var(--accent-glow);
+        }
+        .btn-primary:active { transform: translateY(0); }
+        .btn-secondary {
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+        }
+        .btn-secondary:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+
+        /* Sections (cards) */
+        .card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 20px;
+            margin-bottom: 16px;
+            transition: all var(--transition);
+        }
+        .card-title {
+            font-size: 14px;
+            font-weight: 700;
+            margin-bottom: 16px;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .card-title svg { opacity: 0.6; }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .stat-item {
+            text-align: center;
+            padding: 12px 8px;
+            background: var(--bg-tertiary);
+            border-radius: var(--radius-md);
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--accent);
+        }
+        .stat-label {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 2px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* Bar Chart */
+        .chart-container {
+            display: flex;
+            align-items: flex-end;
+            gap: 6px;
+            height: 80px;
+            padding-top: 8px;
+        }
+        .chart-bar-wrap {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            height: 100%;
+        }
+        .chart-bar {
+            width: 100%;
+            max-width: 32px;
+            border-radius: 4px 4px 0 0;
+            background: var(--accent);
+            opacity: 0.7;
+            transition: height 0.5s ease, opacity var(--transition);
+            margin-top: auto;
+            min-height: 2px;
+        }
+        .chart-bar.today { opacity: 1; }
+        .chart-label {
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        /* Task List */
+        .task-input-row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .task-input {
+            flex: 1;
+            padding: 10px 14px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            font-size: 14px;
+            outline: none;
+            transition: border-color var(--transition);
+        }
+        .task-input:focus { border-color: var(--accent); }
+        .task-input::placeholder { color: var(--text-muted); }
+        .task-add-btn {
+            padding: 10px 16px;
+            border: none;
+            border-radius: var(--radius-sm);
+            background: var(--accent);
+            color: #fff;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all var(--transition);
+            white-space: nowrap;
+        }
+        .task-add-btn:hover { opacity: 0.9; }
+
+        .task-list { list-style: none; }
+        .task-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 0;
+            border-bottom: 1px solid var(--border);
+            animation: slideIn 0.25s ease;
+        }
+        .task-item:last-child { border-bottom: none; }
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(-8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .task-check {
+            width: 20px; height: 20px;
+            border: 2px solid var(--border);
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            transition: all var(--transition);
+        }
+        .task-check:hover { border-color: var(--accent); }
+        .task-check.done {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+        .task-check.done::after {
+            content: '✓';
+            color: #fff;
+            font-size: 12px;
+            font-weight: 700;
+        }
+        .task-text {
+            flex: 1;
+            font-size: 14px;
+            transition: all var(--transition);
+        }
+        .task-text.done {
+            text-decoration: line-through;
+            color: var(--text-muted);
+        }
+        .task-delete {
+            width: 24px; height: 24px;
+            border: none;
+            background: transparent;
+            color: var(--text-muted);
+            cursor: pointer;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transition: all var(--transition);
+            font-size: 16px;
+        }
+        .task-item:hover .task-delete { opacity: 1; }
+        .task-delete:hover { color: #e74c3c; background: rgba(231,76,60,0.1); }
+
+        /* Quote */
+        .quote-box {
+            text-align: center;
+            padding: 16px;
+            font-style: italic;
+            color: var(--text-secondary);
+            font-size: 14px;
+            line-height: 1.5;
+            opacity: 0;
+            transition: opacity 0.6s ease;
+        }
+        .quote-box.visible { opacity: 1; }
+        .quote-author {
+            font-style: normal;
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 6px;
+        }
+
+        /* Settings Panel */
+        .settings-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 100;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+        .settings-overlay.open { opacity: 1; pointer-events: all; }
+        .settings-panel {
+            position: fixed;
+            top: 0; right: 0;
+            width: 340px;
+            max-width: 90vw;
+            height: 100vh;
+            background: var(--bg-secondary);
+            border-left: 1px solid var(--border);
+            z-index: 101;
+            transform: translateX(100%);
+            transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+            overflow-y: auto;
+            padding: 24px;
+        }
+        .settings-panel.open { transform: translateX(0); }
+        .settings-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+        }
+        .settings-header h2 { font-size: 18px; font-weight: 700; }
+        .setting-group {
+            margin-bottom: 20px;
+        }
+        .setting-group label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+        .setting-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .setting-input {
+            width: 80px;
+            padding: 8px 12px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            font-size: 14px;
+            text-align: center;
+            outline: none;
+        }
+        .setting-input:focus { border-color: var(--accent); }
+
+        /* Toggle Switch */
+        .toggle {
+            position: relative;
+            width: 44px;
+            height: 24px;
+            cursor: pointer;
+        }
+        .toggle input { display: none; }
+        .toggle-slider {
+            position: absolute;
+            inset: 0;
+            background: var(--bg-tertiary);
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            transition: all var(--transition);
+        }
+        .toggle-slider::after {
+            content: '';
+            position: absolute;
+            width: 18px; height: 18px;
+            border-radius: 50%;
+            background: var(--text-muted);
+            top: 2px; left: 2px;
+            transition: all var(--transition);
+        }
+        .toggle input:checked + .toggle-slider {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+        .toggle input:checked + .toggle-slider::after {
+            transform: translateX(20px);
+            background: #fff;
+        }
+
+        /* Volume Slider */
+        .volume-slider {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 4px;
+            border-radius: 2px;
+            background: var(--bg-tertiary);
+            outline: none;
+        }
+        .volume-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px; height: 16px;
+            border-radius: 50%;
+            background: var(--accent);
+            cursor: pointer;
+            box-shadow: 0 0 6px var(--accent-glow);
+        }
+        .volume-slider::-moz-range-thumb {
+            width: 16px; height: 16px;
+            border-radius: 50%;
+            background: var(--accent);
+            cursor: pointer;
+            border: none;
+        }
+
+        /* Keyboard hint */
+        .kb-hint {
+            text-align: center;
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 8px;
+        }
+        .kb-hint kbd {
+            padding: 2px 6px;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            background: var(--bg-tertiary);
+            font-family: inherit;
+            font-size: 11px;
+        }
+
+        .empty-state {
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 13px;
+            padding: 16px 0;
+        }
+
+        @media (max-width: 500px) {
+            .app { padding: 16px 14px 32px; }
+            .timer-ring-wrap { width: 220px; height: 220px; }
+            .timer-display { font-size: 52px; }
+            .stats-grid { grid-template-columns: repeat(3, 1fr); gap: 8px; }
+            .controls { gap: 8px; }
+            .btn { padding: 10px 20px; font-size: 13px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-gradient focus-phase" id="bgGradient"></div>
+
+    <div class="app">
+        <header class="header">
+            <h1>Pomodoro</h1>
+            <div class="header-actions">
+                <button class="icon-btn" id="themeToggle" title="Toggle theme (T)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+                </button>
+                <button class="icon-btn" id="settingsToggle" title="Settings">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+                </button>
+            </div>
+        </header>
+
+        <div class="phase-tabs">
+            <button class="phase-tab active" data-phase="focus">Focus</button>
+            <button class="phase-tab" data-phase="shortBreak">Short Break</button>
+            <button class="phase-tab" data-phase="longBreak">Long Break</button>
+        </div>
+
+        <div class="timer-container">
+            <div class="timer-ring-wrap">
+                <svg viewBox="0 0 260 260">
+                    <circle class="ring-track" cx="130" cy="130" r="120"/>
+                    <circle class="ring-glow" cx="130" cy="130" r="120"
+                        stroke-dasharray="753.98" stroke-dashoffset="0" id="ringGlow"/>
+                    <circle class="ring-progress" cx="130" cy="130" r="120"
+                        stroke-dasharray="753.98" stroke-dashoffset="0" id="ringProgress"/>
+                </svg>
+                <div class="timer-inner">
+                    <div class="phase-label" id="phaseLabel">FOCUS</div>
+                    <div class="timer-display" id="timerDisplay">25:00</div>
+                    <div class="timer-sub" id="timerSub">Session 1 of 4</div>
+                </div>
+            </div>
+            <div class="session-dots" id="sessionDots"></div>
+        </div>
+
+        <div class="controls">
+            <button class="btn btn-secondary" id="resetBtn" title="Reset (R)">Reset</button>
+            <button class="btn btn-primary" id="startBtn" title="Start / Pause (Space)">
+                <span id="startBtnIcon">▶</span> <span id="startBtnText">Start</span>
+            </button>
+            <button class="btn btn-secondary" id="skipBtn" title="Skip (S)">Skip</button>
+        </div>
+
+        <div class="kb-hint">
+            <kbd>Space</kbd> start/pause &nbsp; <kbd>R</kbd> reset &nbsp; <kbd>S</kbd> skip &nbsp; <kbd>T</kbd> theme
+        </div>
+
+        <div class="quote-box" id="quoteBox">
+            <div id="quoteText"></div>
+            <div class="quote-author" id="quoteAuthor"></div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                Today's Progress
+            </div>
+            <div class="stats-grid">
+                <div class="stat-item">
+                    <div class="stat-value" id="statPomodoros">0</div>
+                    <div class="stat-label">Pomodoros</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="statFocusTime">0m</div>
+                    <div class="stat-label">Focus Time</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="statStreak">0</div>
+                    <div class="stat-label">Day Streak</div>
+                </div>
+            </div>
+            <div class="chart-container" id="weekChart"></div>
+        </div>
+
+        <div class="card">
+            <div class="card-title">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+                Tasks
+            </div>
+            <div class="task-input-row">
+                <input class="task-input" id="taskInput" placeholder="What are you working on?" maxlength="120">
+                <button class="task-add-btn" id="taskAddBtn">Add</button>
+            </div>
+            <ul class="task-list" id="taskList"></ul>
+            <div class="empty-state" id="taskEmpty">No tasks yet. Add one above!</div>
+        </div>
+    </div>
+
+    <!-- Settings Panel -->
+    <div class="settings-overlay" id="settingsOverlay"></div>
+    <div class="settings-panel" id="settingsPanel">
+        <div class="settings-header">
+            <h2>Settings</h2>
+            <button class="icon-btn" id="settingsClose">✕</button>
+        </div>
+
+        <div class="setting-group">
+            <label>Focus Duration (min)</label>
+            <input class="setting-input" type="number" id="setWork" min="1" max="120" value="25">
+        </div>
+        <div class="setting-group">
+            <label>Short Break Duration (min)</label>
+            <input class="setting-input" type="number" id="setShortBreak" min="1" max="60" value="5">
+        </div>
+        <div class="setting-group">
+            <label>Long Break Duration (min)</label>
+            <input class="setting-input" type="number" id="setLongBreak" min="1" max="60" value="15">
+        </div>
+        <div class="setting-group">
+            <label>Pomodoros Before Long Break</label>
+            <input class="setting-input" type="number" id="setRounds" min="2" max="10" value="4">
+        </div>
+        <div class="setting-group">
+            <div class="setting-row">
+                <label style="margin:0">Auto-start Breaks</label>
+                <label class="toggle"><input type="checkbox" id="setAutoBreak"><span class="toggle-slider"></span></label>
+            </div>
+        </div>
+        <div class="setting-group">
+            <div class="setting-row">
+                <label style="margin:0">Auto-start Work</label>
+                <label class="toggle"><input type="checkbox" id="setAutoWork"><span class="toggle-slider"></span></label>
+            </div>
+        </div>
+        <div class="setting-group">
+            <div class="setting-row">
+                <label style="margin:0">Sound Enabled</label>
+                <label class="toggle"><input type="checkbox" id="setSound" checked><span class="toggle-slider"></span></label>
+            </div>
+        </div>
+        <div class="setting-group">
+            <label>Volume</label>
+            <input class="volume-slider" type="range" id="setVolume" min="0" max="100" value="70">
+        </div>
+    </div>
+
+    <script>
+    (() => {
+        const CIRCUMFERENCE = 2 * Math.PI * 120;
+        const QUOTES = [
+            { text: "The secret of getting ahead is getting started.", author: "Mark Twain" },
+            { text: "It's not that I'm so smart, it's just that I stay with problems longer.", author: "Albert Einstein" },
+            { text: "Focus on being productive instead of busy.", author: "Tim Ferriss" },
+            { text: "The way to get started is to quit talking and begin doing.", author: "Walt Disney" },
+            { text: "You don't have to be great to start, but you have to start to be great.", author: "Zig Ziglar" },
+            { text: "Concentrate all your thoughts upon the work at hand.", author: "Alexander Graham Bell" },
+            { text: "Action is the foundational key to all success.", author: "Pablo Picasso" },
+            { text: "Do the hard jobs first. The easy jobs will take care of themselves.", author: "Dale Carnegie" },
+            { text: "Amateurs sit and wait for inspiration, the rest of us just get up and go to work.", author: "Stephen King" },
+            { text: "Start where you are. Use what you have. Do what you can.", author: "Arthur Ashe" },
+            { text: "The only way to do great work is to love what you do.", author: "Steve Jobs" },
+            { text: "Productivity is never an accident. It is always the result of commitment to excellence.", author: "Paul J. Meyer" },
+            { text: "Until we can manage time, we can manage nothing else.", author: "Peter Drucker" },
+            { text: "Your mind is for having ideas, not holding them.", author: "David Allen" },
+            { text: "Simplicity boils down to two steps: Identify the essential. Eliminate the rest.", author: "Leo Babauta" },
+        ];
+
+        const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+        const $ = id => document.getElementById(id);
+
+        // --- State ---
+        let settings = loadSettings();
+        let phase = 'focus'; // 'focus' | 'shortBreak' | 'longBreak'
+        let completedInCycle = 0;
+        let totalCompleted = 0;
+        let timeLeft = settings.workDuration * 60;
+        let totalTime = timeLeft;
+        let running = false;
+        let intervalId = null;
+        let tasks = loadTasks();
+        let stats = loadStats();
+        let theme = localStorage.getItem('pomo_theme') || 'dark';
+
+        // --- Audio Context ---
+        let audioCtx = null;
+
+        function getAudioCtx() {
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            return audioCtx;
+        }
+
+        function playChime() {
+            if (!settings.soundEnabled) return;
+            const ctx = getAudioCtx();
+            const vol = settings.volume / 100;
+            const now = ctx.currentTime;
+            const notes = [523.25, 659.25, 783.99, 1046.50];
+            notes.forEach((freq, i) => {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(freq, now + i * 0.15);
+                gain.gain.setValueAtTime(0, now + i * 0.15);
+                gain.gain.linearRampToValueAtTime(vol * 0.3, now + i * 0.15 + 0.05);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.15 + 0.6);
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start(now + i * 0.15);
+                osc.stop(now + i * 0.15 + 0.7);
+            });
+        }
+
+        function playTick() {
+            if (!settings.soundEnabled) return;
+            const ctx = getAudioCtx();
+            const vol = settings.volume / 100;
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(800, ctx.currentTime);
+            gain.gain.setValueAtTime(vol * 0.03, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.05);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start();
+            osc.stop(ctx.currentTime + 0.06);
+        }
+
+        // --- Persistence ---
+        function loadSettings() {
+            const defaults = {
+                workDuration: 25,
+                shortBreakDuration: 5,
+                longBreakDuration: 15,
+                rounds: 4,
+                autoBreak: false,
+                autoWork: false,
+                soundEnabled: true,
+                volume: 70,
+            };
+            try {
+                const s = JSON.parse(localStorage.getItem('pomo_settings'));
+                return s ? { ...defaults, ...s } : defaults;
+            } catch { return defaults; }
+        }
+
+        function saveSettings() {
+            localStorage.setItem('pomo_settings', JSON.stringify(settings));
+        }
+
+        function loadTasks() {
+            try { return JSON.parse(localStorage.getItem('pomo_tasks')) || []; }
+            catch { return []; }
+        }
+
+        function saveTasks() {
+            localStorage.setItem('pomo_tasks', JSON.stringify(tasks));
+        }
+
+        function todayKey() {
+            return new Date().toISOString().slice(0, 10);
+        }
+
+        function loadStats() {
+            try { return JSON.parse(localStorage.getItem('pomo_stats')) || {}; }
+            catch { return {}; }
+        }
+
+        function saveStats() {
+            localStorage.setItem('pomo_stats', JSON.stringify(stats));
+        }
+
+        function getTodayStats() {
+            const key = todayKey();
+            if (!stats[key]) stats[key] = { pomodoros: 0, focusMinutes: 0 };
+            return stats[key];
+        }
+
+        function addPomodoro() {
+            const today = getTodayStats();
+            today.pomodoros++;
+            today.focusMinutes += settings.workDuration;
+            saveStats();
+        }
+
+        function getStreak() {
+            let streak = 0;
+            const d = new Date();
+            while (true) {
+                const key = d.toISOString().slice(0, 10);
+                if (stats[key] && stats[key].pomodoros > 0) {
+                    streak++;
+                    d.setDate(d.getDate() - 1);
+                } else {
+                    break;
+                }
+            }
+            return streak;
+        }
+
+        function getLast7Days() {
+            const days = [];
+            for (let i = 6; i >= 0; i--) {
+                const d = new Date();
+                d.setDate(d.getDate() - i);
+                const key = d.toISOString().slice(0, 10);
+                days.push({
+                    label: DAY_LABELS[d.getDay()],
+                    count: stats[key] ? stats[key].pomodoros : 0,
+                    isToday: i === 0,
+                });
+            }
+            return days;
+        }
+
+        // --- Phase Colors ---
+        function getPhaseColor() {
+            if (phase === 'focus') return { accent: '#e74c3c', glow: 'rgba(231,76,60,0.25)', cls: 'focus-phase', label: 'FOCUS' };
+            if (phase === 'shortBreak') return { accent: '#2ecc71', glow: 'rgba(46,204,113,0.25)', cls: 'short-break-phase', label: 'SHORT BREAK' };
+            return { accent: '#3498db', glow: 'rgba(52,152,219,0.25)', cls: 'long-break-phase', label: 'LONG BREAK' };
+        }
+
+        function applyPhaseTheme() {
+            const pc = getPhaseColor();
+            document.documentElement.style.setProperty('--accent', pc.accent);
+            document.documentElement.style.setProperty('--accent-glow', pc.glow);
+            $('bgGradient').className = 'bg-gradient ' + pc.cls;
+            $('phaseLabel').textContent = pc.label;
+
+            document.querySelectorAll('.phase-tab').forEach(tab => {
+                tab.classList.toggle('active', tab.dataset.phase === phase);
+            });
+
+            updateFavicon(pc.accent);
+        }
+
+        function updateFavicon(color) {
+            const encoded = encodeURIComponent(color);
+            $('favicon').href = `data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='14' fill='${encoded}'/></svg>`;
+        }
+
+        // --- Timer Core ---
+        function getDuration(p) {
+            if (p === 'focus') return settings.workDuration * 60;
+            if (p === 'shortBreak') return settings.shortBreakDuration * 60;
+            return settings.longBreakDuration * 60;
+        }
+
+        function setPhase(newPhase) {
+            phase = newPhase;
+            timeLeft = getDuration(phase);
+            totalTime = timeLeft;
+            running = false;
+            clearInterval(intervalId);
+            intervalId = null;
+            applyPhaseTheme();
+            updateDisplay();
+            updateButtons();
+            updateQuote();
+        }
+
+        function start() {
+            if (running) return;
+            running = true;
+            updateButtons();
+            intervalId = setInterval(tick, 1000);
+        }
+
+        function pause() {
+            running = false;
+            clearInterval(intervalId);
+            intervalId = null;
+            updateButtons();
+        }
+
+        function toggleStartPause() {
+            if (running) pause(); else start();
+        }
+
+        function reset() {
+            pause();
+            timeLeft = getDuration(phase);
+            totalTime = timeLeft;
+            updateDisplay();
+        }
+
+        function skip() {
+            pause();
+            onTimerComplete();
+        }
+
+        function tick() {
+            if (timeLeft <= 0) return;
+            timeLeft--;
+            playTick();
+            updateDisplay();
+            if (timeLeft <= 0) {
+                pause();
+                onTimerComplete();
+            }
+        }
+
+        function onTimerComplete() {
+            playChime();
+
+            if (phase === 'focus') {
+                completedInCycle++;
+                totalCompleted++;
+                addPomodoro();
+                updateStats();
+
+                if (completedInCycle >= settings.rounds) {
+                    completedInCycle = 0;
+                    setPhase('longBreak');
+                    if (settings.autoBreak) start();
+                } else {
+                    setPhase('shortBreak');
+                    if (settings.autoBreak) start();
+                }
+            } else {
+                setPhase('focus');
+                if (settings.autoWork) start();
+            }
+
+            updateSessionDots();
+        }
+
+        // --- Display Updates ---
+        function formatTime(s) {
+            const m = Math.floor(s / 60);
+            const sec = s % 60;
+            return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+        }
+
+        function updateDisplay() {
+            const display = formatTime(timeLeft);
+            $('timerDisplay').textContent = display;
+
+            const pc = getPhaseColor();
+            document.title = `${display} - ${pc.label} | Pomodoro`;
+
+            const progress = totalTime > 0 ? (totalTime - timeLeft) / totalTime : 0;
+            const offset = CIRCUMFERENCE * (1 - progress);
+            $('ringProgress').setAttribute('stroke-dashoffset', offset);
+            $('ringGlow').setAttribute('stroke-dashoffset', offset);
+
+            const sessionNum = (totalCompleted % settings.rounds) + (phase === 'focus' ? 1 : 0);
+            $('timerSub').textContent = `Session ${Math.min(sessionNum, settings.rounds)} of ${settings.rounds}`;
+        }
+
+        function updateButtons() {
+            $('startBtnIcon').textContent = running ? '⏸' : '▶';
+            $('startBtnText').textContent = running ? 'Pause' : 'Start';
+        }
+
+        function updateSessionDots() {
+            const container = $('sessionDots');
+            container.innerHTML = '';
+            const count = settings.rounds;
+            const filled = totalCompleted % settings.rounds;
+            for (let i = 0; i < count; i++) {
+                const dot = document.createElement('div');
+                dot.className = 'session-dot' + (i < filled ? ' filled' : '');
+                container.appendChild(dot);
+            }
+        }
+
+        function updateStats() {
+            const today = getTodayStats();
+            $('statPomodoros').textContent = today.pomodoros;
+            const mins = today.focusMinutes;
+            $('statFocusTime').textContent = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
+            $('statStreak').textContent = getStreak();
+            renderChart();
+        }
+
+        function renderChart() {
+            const container = $('weekChart');
+            const days = getLast7Days();
+            const max = Math.max(1, ...days.map(d => d.count));
+            container.innerHTML = '';
+            days.forEach(d => {
+                const wrap = document.createElement('div');
+                wrap.className = 'chart-bar-wrap';
+                const bar = document.createElement('div');
+                bar.className = 'chart-bar' + (d.isToday ? ' today' : '');
+                bar.style.height = `${Math.max(3, (d.count / max) * 100)}%`;
+                bar.title = `${d.count} pomodoro${d.count !== 1 ? 's' : ''}`;
+                const label = document.createElement('div');
+                label.className = 'chart-label';
+                label.textContent = d.label;
+                wrap.appendChild(bar);
+                wrap.appendChild(label);
+                container.appendChild(wrap);
+            });
+        }
+
+        // --- Quote ---
+        let currentQuoteIdx = -1;
+        function updateQuote() {
+            const box = $('quoteBox');
+            const isBreak = phase !== 'focus';
+            if (!isBreak) {
+                box.classList.remove('visible');
+                return;
+            }
+            let idx;
+            do { idx = Math.floor(Math.random() * QUOTES.length); } while (idx === currentQuoteIdx && QUOTES.length > 1);
+            currentQuoteIdx = idx;
+            const q = QUOTES[idx];
+            $('quoteText').textContent = `"${q.text}"`;
+            $('quoteAuthor').textContent = `— ${q.author}`;
+            setTimeout(() => box.classList.add('visible'), 50);
+        }
+
+        // --- Tasks ---
+        function renderTasks() {
+            const list = $('taskList');
+            list.innerHTML = '';
+            $('taskEmpty').style.display = tasks.length === 0 ? 'block' : 'none';
+            tasks.forEach((t, i) => {
+                const li = document.createElement('li');
+                li.className = 'task-item';
+                li.innerHTML = `
+                    <div class="task-check ${t.done ? 'done' : ''}" data-idx="${i}"></div>
+                    <span class="task-text ${t.done ? 'done' : ''}">${escapeHtml(t.text)}</span>
+                    <button class="task-delete" data-idx="${i}">✕</button>
+                `;
+                list.appendChild(li);
+            });
+        }
+
+        function escapeHtml(s) {
+            const d = document.createElement('div');
+            d.textContent = s;
+            return d.innerHTML;
+        }
+
+        function addTask(text) {
+            text = text.trim();
+            if (!text) return;
+            tasks.unshift({ text, done: false });
+            saveTasks();
+            renderTasks();
+        }
+
+        function toggleTask(idx) {
+            if (tasks[idx]) {
+                tasks[idx].done = !tasks[idx].done;
+                saveTasks();
+                renderTasks();
+            }
+        }
+
+        function deleteTask(idx) {
+            tasks.splice(idx, 1);
+            saveTasks();
+            renderTasks();
+        }
+
+        // --- Theme ---
+        function applyTheme() {
+            document.body.classList.toggle('light-theme', theme === 'light');
+            localStorage.setItem('pomo_theme', theme);
+        }
+
+        function toggleTheme() {
+            theme = theme === 'dark' ? 'light' : 'dark';
+            applyTheme();
+        }
+
+        // --- Settings ---
+        function openSettings() {
+            $('settingsOverlay').classList.add('open');
+            $('settingsPanel').classList.add('open');
+            populateSettings();
+        }
+
+        function closeSettings() {
+            $('settingsOverlay').classList.remove('open');
+            $('settingsPanel').classList.remove('open');
+            readSettings();
+        }
+
+        function populateSettings() {
+            $('setWork').value = settings.workDuration;
+            $('setShortBreak').value = settings.shortBreakDuration;
+            $('setLongBreak').value = settings.longBreakDuration;
+            $('setRounds').value = settings.rounds;
+            $('setAutoBreak').checked = settings.autoBreak;
+            $('setAutoWork').checked = settings.autoWork;
+            $('setSound').checked = settings.soundEnabled;
+            $('setVolume').value = settings.volume;
+        }
+
+        function readSettings() {
+            const oldWork = settings.workDuration;
+            const oldShort = settings.shortBreakDuration;
+            const oldLong = settings.longBreakDuration;
+
+            settings.workDuration = clamp(parseInt($('setWork').value) || 25, 1, 120);
+            settings.shortBreakDuration = clamp(parseInt($('setShortBreak').value) || 5, 1, 60);
+            settings.longBreakDuration = clamp(parseInt($('setLongBreak').value) || 15, 1, 60);
+            settings.rounds = clamp(parseInt($('setRounds').value) || 4, 2, 10);
+            settings.autoBreak = $('setAutoBreak').checked;
+            settings.autoWork = $('setAutoWork').checked;
+            settings.soundEnabled = $('setSound').checked;
+            settings.volume = parseInt($('setVolume').value) || 70;
+            saveSettings();
+
+            if (!running) {
+                const changed = (phase === 'focus' && oldWork !== settings.workDuration)
+                    || (phase === 'shortBreak' && oldShort !== settings.shortBreakDuration)
+                    || (phase === 'longBreak' && oldLong !== settings.longBreakDuration);
+                if (changed) {
+                    timeLeft = getDuration(phase);
+                    totalTime = timeLeft;
+                    updateDisplay();
+                }
+            }
+
+            updateSessionDots();
+        }
+
+        function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+        // --- Event Bindings ---
+        $('startBtn').addEventListener('click', toggleStartPause);
+        $('resetBtn').addEventListener('click', reset);
+        $('skipBtn').addEventListener('click', skip);
+        $('themeToggle').addEventListener('click', toggleTheme);
+        $('settingsToggle').addEventListener('click', openSettings);
+        $('settingsClose').addEventListener('click', closeSettings);
+        $('settingsOverlay').addEventListener('click', closeSettings);
+
+        document.querySelectorAll('.phase-tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                if (running) pause();
+                setPhase(tab.dataset.phase);
+                updateSessionDots();
+            });
+        });
+
+        $('taskAddBtn').addEventListener('click', () => {
+            addTask($('taskInput').value);
+            $('taskInput').value = '';
+            $('taskInput').focus();
+        });
+
+        $('taskInput').addEventListener('keydown', e => {
+            if (e.key === 'Enter') {
+                addTask($('taskInput').value);
+                $('taskInput').value = '';
+            }
+        });
+
+        $('taskList').addEventListener('click', e => {
+            const check = e.target.closest('.task-check');
+            if (check) { toggleTask(parseInt(check.dataset.idx)); return; }
+            const del = e.target.closest('.task-delete');
+            if (del) { deleteTask(parseInt(del.dataset.idx)); }
+        });
+
+        document.addEventListener('keydown', e => {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+            if (e.code === 'Space') { e.preventDefault(); toggleStartPause(); }
+            else if (e.key === 'r' || e.key === 'R') { reset(); }
+            else if (e.key === 's' || e.key === 'S') { skip(); }
+            else if (e.key === 't' || e.key === 'T') { toggleTheme(); }
+        });
+
+        // --- Init ---
+        applyTheme();
+        applyPhaseTheme();
+        updateDisplay();
+        updateSessionDots();
+        updateStats();
+        renderTasks();
+        updateQuote();
+    })();
+    </script>
+</body>
+</html>

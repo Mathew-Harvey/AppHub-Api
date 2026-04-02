@@ -1,0 +1,2069 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>PAC-MAN — Arcade Classic</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+    background:#000;display:flex;justify-content:center;align-items:center;
+    min-height:100vh;font-family:'Courier New',monospace;
+    overflow:hidden;color:#fff;touch-action:none;user-select:none;
+}
+#wrap{position:relative;display:inline-block}
+canvas{display:block;image-rendering:pixelated}
+#overlay{
+    position:absolute;top:0;left:0;width:100%;height:100%;
+    display:flex;justify-content:center;align-items:center;
+    pointer-events:none;z-index:10;
+}
+#overlay.active{pointer-events:auto}
+.scr{
+    text-align:center;background:rgba(0,0,0,.93);
+    padding:36px 54px;border:3px solid #2121ff;border-radius:10px;
+    box-shadow:0 0 30px rgba(33,33,255,.4),inset 0 0 30px rgba(33,33,255,.08);
+    display:none;min-width:340px;
+}
+.scr.vis{display:block}
+.scr h1{
+    font-size:42px;color:#ff0;
+    text-shadow:0 0 18px rgba(255,255,0,.55);
+    letter-spacing:5px;margin-bottom:18px;
+}
+.scr p{font-size:15px;color:#ddd;margin:8px 0}
+.scr .big{font-size:28px;color:#ff0;margin:12px 0}
+.scr button{
+    background:transparent;color:#ff0;border:2px solid #ff0;
+    padding:10px 36px;font-size:17px;font-family:inherit;cursor:pointer;
+    margin-top:16px;transition:all .2s;text-transform:uppercase;letter-spacing:2px;
+}
+.scr button:hover{background:#ff0;color:#000}
+.hint{font-size:11px;color:#888;margin-top:12px}
+.ghosts-row{margin:14px 0;font-size:13px}
+.ghosts-row span{margin:0 6px}
+#pauseOv{
+    position:absolute;top:0;left:0;width:100%;height:100%;
+    background:rgba(0,0,0,.7);display:none;justify-content:center;
+    align-items:center;z-index:20;font-size:36px;color:#ff0;
+    letter-spacing:6px;font-family:inherit;
+}
+#pauseOv.vis{display:flex}
+</style>
+</head>
+<body>
+<div id="wrap">
+    <canvas id="cv"></canvas>
+    <div id="overlay" class="active">
+        <div id="startScr" class="scr vis">
+            <h1>PAC-MAN</h1>
+            <p>ARCADE CLASSIC &bull; 1980</p>
+            <div class="ghosts-row">
+                <span style="color:#f00">&#9632; BLINKY</span>
+                <span style="color:#ffb8ff">&#9632; PINKY</span>
+                <span style="color:#0ff">&#9632; INKY</span>
+                <span style="color:#ffb852">&#9632; CLYDE</span>
+            </div>
+            <button id="btnStart">INSERT COIN</button>
+            <p class="hint">ARROWS / WASD = Move &nbsp;&nbsp; P = Pause</p>
+            <p class="hint">Swipe on mobile to control</p>
+        </div>
+        <div id="overScr" class="scr">
+            <h1>GAME OVER</h1>
+            <p>YOUR SCORE</p>
+            <div class="big" id="finalScore">0</div>
+            <p id="hiMsg" style="color:#0f0;display:none">&#9733; NEW HIGH SCORE &#9733;</p>
+            <button id="btnRestart">PLAY AGAIN</button>
+        </div>
+    </div>
+    <div id="pauseOv">PAUSED</div>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+/* ============================================================
+   CONFIGURATION
+   ============================================================ */
+
+const TILE = 22;
+const COLS = 28;
+const ROWS = 31;
+const TOP  = 48;
+const BOT  = 42;
+const CW   = COLS * TILE;
+const CH   = ROWS * TILE + TOP + BOT;
+
+const WALL   = 1;
+const DOT    = 2;
+const PELLET = 3;
+const EMPTY  = 0;
+const GATE   = 4;
+
+const LEFT = 0, RIGHT = 1, UP = 2, DOWN = 3, NONE = -1;
+const DX = [-1, 1, 0, 0];
+const DY = [0, 0, -1, 1];
+const OPPOSITE = [1, 0, 3, 2];
+const DIR_PRIORITY = [UP, LEFT, DOWN, RIGHT];
+
+const TUNNEL_ROW    = 14;
+const GATE_ROW      = 12;
+const PEN_CENTER_X  = 13.5;
+const PEN_CENTER_Y  = 14;
+const PEN_TOP_Y     = 13.5;
+const PEN_BOT_Y     = 14.5;
+const PEN_EXIT_Y    = 11;
+const FRUIT_TILE    = {x:13, y:17};
+
+/* ============================================================
+   MAZE TEMPLATE — original 28x31 layout
+   1=wall 2=dot 3=power-pellet 0=empty 4=ghost-house gate
+   ============================================================ */
+
+const MAZE_TEMPLATE = [
+[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+[1,2,2,2,2,2,2,2,2,2,2,2,2,1,1,2,2,2,2,2,2,2,2,2,2,2,2,1],
+[1,2,1,1,1,1,2,1,1,1,1,1,2,1,1,2,1,1,1,1,1,2,1,1,1,1,2,1],
+[1,3,1,1,1,1,2,1,1,1,1,1,2,1,1,2,1,1,1,1,1,2,1,1,1,1,3,1],
+[1,2,1,1,1,1,2,1,1,1,1,1,2,1,1,2,1,1,1,1,1,2,1,1,1,1,2,1],
+[1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,1],
+[1,2,1,1,1,1,2,1,1,2,1,1,1,1,1,1,1,1,2,1,1,2,1,1,1,1,2,1],
+[1,2,1,1,1,1,2,1,1,2,1,1,1,1,1,1,1,1,2,1,1,2,1,1,1,1,2,1],
+[1,2,2,2,2,2,2,1,1,2,2,2,2,1,1,2,2,2,2,1,1,2,2,2,2,2,2,1],
+[1,1,1,1,1,1,2,1,1,1,1,1,0,1,1,0,1,1,1,1,1,2,1,1,1,1,1,1],
+[1,1,1,1,1,1,2,1,1,1,1,1,0,1,1,0,1,1,1,1,1,2,1,1,1,1,1,1],
+[1,1,1,1,1,1,2,1,1,0,0,0,0,0,0,0,0,0,0,1,1,2,1,1,1,1,1,1],
+[1,1,1,1,1,1,2,1,1,0,1,1,1,4,4,1,1,1,0,1,1,2,1,1,1,1,1,1],
+[1,1,1,1,1,1,2,1,1,0,1,0,0,0,0,0,0,1,0,1,1,2,1,1,1,1,1,1],
+[0,0,0,0,0,0,2,0,0,0,1,0,0,0,0,0,0,1,0,0,0,2,0,0,0,0,0,0],
+[1,1,1,1,1,1,2,1,1,0,1,0,0,0,0,0,0,1,0,1,1,2,1,1,1,1,1,1],
+[1,1,1,1,1,1,2,1,1,0,1,1,1,1,1,1,1,1,0,1,1,2,1,1,1,1,1,1],
+[1,1,1,1,1,1,2,1,1,0,0,0,0,0,0,0,0,0,0,1,1,2,1,1,1,1,1,1],
+[1,1,1,1,1,1,2,1,1,0,1,1,1,1,1,1,1,1,0,1,1,2,1,1,1,1,1,1],
+[1,1,1,1,1,1,2,1,1,0,1,1,1,1,1,1,1,1,0,1,1,2,1,1,1,1,1,1],
+[1,2,2,2,2,2,2,2,2,2,2,2,2,1,1,2,2,2,2,2,2,2,2,2,2,2,2,1],
+[1,2,1,1,1,1,2,1,1,1,1,1,2,1,1,2,1,1,1,1,1,2,1,1,1,1,2,1],
+[1,2,1,1,1,1,2,1,1,1,1,1,2,1,1,2,1,1,1,1,1,2,1,1,1,1,2,1],
+[1,3,2,2,1,1,2,2,2,2,2,2,2,0,0,2,2,2,2,2,2,2,1,1,2,2,3,1],
+[1,1,1,2,1,1,2,1,1,2,1,1,1,1,1,1,1,1,2,1,1,2,1,1,2,1,1,1],
+[1,1,1,2,1,1,2,1,1,2,1,1,1,1,1,1,1,1,2,1,1,2,1,1,2,1,1,1],
+[1,2,2,2,2,2,2,1,1,2,2,2,2,1,1,2,2,2,2,1,1,2,2,2,2,2,2,1],
+[1,2,1,1,1,1,1,1,1,1,1,1,2,1,1,2,1,1,1,1,1,1,1,1,1,1,2,1],
+[1,2,1,1,1,1,1,1,1,1,1,1,2,1,1,2,1,1,1,1,1,1,1,1,1,1,2,1],
+[1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,1],
+[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+];
+
+const SCATTER_TARGETS = [
+    {x:25, y:-3},
+    {x:2,  y:-3},
+    {x:27, y:34},
+    {x:0,  y:34}
+];
+
+const GHOST_COLORS     = ['#ff0000','#ffb8ff','#00ffff','#ffb852'];
+const GHOST_NAMES      = ['blinky','pinky','inky','clyde'];
+const FRIGHT_COLOR     = '#2121ff';
+const FRIGHT_FLASH_CLR = '#ffffff';
+
+const GHOST_START = [
+    {x:14, y:11,  dir:LEFT},
+    {x:14, y:14,  dir:DOWN},
+    {x:12, y:14,  dir:UP},
+    {x:16, y:14,  dir:UP}
+];
+const PAC_START = {x:14, y:23, dir:LEFT};
+
+const MODE_DURATIONS = [
+    [7*60, 20*60, 7*60, 20*60, 5*60, 20*60, 5*60, 999999],
+    [7*60, 20*60, 7*60, 20*60, 5*60, 1033*60, 1, 999999],
+    [5*60, 20*60, 5*60, 20*60, 5*60, 1037*60, 1, 999999]
+];
+
+const FRIGHT_DURATIONS = [
+    6*60,5*60,4*60,3*60,2*60,5*60,2*60,2*60,
+    1*60,5*60,2*60,1*60,1*60,3*60,1*60,1*60,0,1*60,0,0,0
+];
+const FRIGHT_FLASHES = [5,5,5,5,5,5,5,5,3,5,5,3,3,5,3,3,0,3,0,0,0];
+
+const GHOST_PEN_DOT_LIMITS = [0, 0, 30, 60];
+
+const FRUIT_DEFS = [
+    {name:'cherry',    pts:100,  color:'#f00'},
+    {name:'strawberry',pts:300,  color:'#f55'},
+    {name:'orange',    pts:500,  color:'#f90'},
+    {name:'apple',     pts:700,  color:'#0f0'},
+    {name:'melon',     pts:1000, color:'#0f9'},
+    {name:'galaxian',  pts:2000, color:'#00f'},
+    {name:'bell',      pts:3000, color:'#ff0'},
+    {name:'key',       pts:5000, color:'#0ff'}
+];
+
+const SPEED_TABLE = {
+    pacNorm:    [0.80,0.90,0.90,0.90,1.00,1.00,1.00,1.00,1.00,1.00,1.00],
+    pacFright:  [0.90,0.95,0.95,0.95,1.00,1.00,1.00,1.00,1.00,1.00,1.00],
+    pacDot:     [0.71,0.79,0.79,0.79,0.87,0.87,0.87,0.87,0.87,0.87,0.87],
+    ghostNorm:  [0.75,0.85,0.85,0.85,0.95,0.95,0.95,0.95,0.95,0.95,0.95],
+    ghostFright:[0.50,0.55,0.55,0.55,0.60,0.60,0.60,0.60,0.60,0.60,0.60],
+    ghostTunnel:[0.40,0.45,0.45,0.45,0.50,0.50,0.50,0.50,0.50,0.50,0.50]
+};
+const MAX_SPEED = 0.075;
+
+const ELROY1_DOTS  = [20,30,40,40,40,50,50,50,60,60,60];
+const ELROY1_SPEED = [0.80,0.90,0.90,0.90,1.00,1.00,1.00,1.00,1.00,1.00,1.00];
+const ELROY2_DOTS  = [10,15,20,20,20,25,25,25,30,30,30];
+const ELROY2_SPEED = [0.85,0.95,0.95,0.95,1.05,1.05,1.05,1.05,1.05,1.05,1.05];
+
+/* ============================================================
+   CANVAS SETUP
+   ============================================================ */
+
+const cv  = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+cv.width  = CW;
+cv.height = CH;
+
+const overlay  = document.getElementById('overlay');
+const startScr = document.getElementById('startScr');
+const overScr  = document.getElementById('overScr');
+const pauseOv  = document.getElementById('pauseOv');
+
+document.getElementById('btnStart').onclick   = startGame;
+document.getElementById('btnRestart').onclick = restartGame;
+
+/* ============================================================
+   GAME STATE
+   ============================================================ */
+
+let maze, totalDots, dotsEaten, score, highScore, lives, level;
+let pac, ghosts, fruit;
+let gameState, paused, frame;
+let modePhase, modeTimer, globalMode;
+let frightTimer, frightFlashTimer, ghostsEatenThisFright;
+let deathAnimTimer;
+let levelCompleteTimer;
+let readyTimer;
+let scorePopups;
+let extraLifeGiven;
+let wakaToggle, wakaDelay;
+let freezeTimer;
+let deathParticles;
+let corneringBuffer;
+let lastFrameTime, accumulator;
+const STEP = 1000 / 60;
+
+highScore = parseInt(localStorage.getItem('pacHigh')) || 0;
+
+/* ============================================================
+   AUDIO — Web Audio API synthesized sounds
+   ============================================================ */
+
+const audio = new (window.AudioContext || window.webkitAudioContext)();
+let sirenOsc  = null;
+let sirenGain = null;
+let powerOsc  = null;
+let powerGain = null;
+
+function resumeAudio(){
+    if(audio.state === 'suspended') audio.resume();
+}
+
+function osc(type, freq, dur, vol, freqEnd){
+    const o = audio.createOscillator();
+    const g = audio.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(freq, audio.currentTime);
+    if(freqEnd !== undefined)
+        o.frequency.linearRampToValueAtTime(freqEnd, audio.currentTime + dur);
+    g.gain.setValueAtTime(vol, audio.currentTime);
+    g.gain.linearRampToValueAtTime(0, audio.currentTime + dur);
+    o.connect(g).connect(audio.destination);
+    o.start();
+    o.stop(audio.currentTime + dur + 0.02);
+    return o;
+}
+
+function playWaka(){
+    if(wakaDelay > 0) return;
+    wakaDelay = 5;
+    wakaToggle = !wakaToggle;
+    osc('sine', wakaToggle ? 440 : 493, 0.065, 0.16);
+}
+
+function playEatGhost(){
+    osc('square', 180, 0.5, 0.22, 1000);
+}
+
+function playEatFruit(){
+    const t = audio.currentTime;
+    [800, 1200, 1600].forEach((f, i) => {
+        const o = audio.createOscillator();
+        const g = audio.createGain();
+        o.type = 'sine';
+        o.frequency.setValueAtTime(f, t + i * 0.07);
+        g.gain.setValueAtTime(0.18, t + i * 0.07);
+        g.gain.linearRampToValueAtTime(0, t + i * 0.07 + 0.08);
+        o.connect(g).connect(audio.destination);
+        o.start(t + i * 0.07);
+        o.stop(t + i * 0.07 + 0.09);
+    });
+}
+
+function playDeath(){
+    const notes = [523,493,466,440,415,392,370,349,330,311,294,277,261];
+    notes.forEach((f, i) => {
+        const t = audio.currentTime + i * 0.11;
+        const o = audio.createOscillator();
+        const g = audio.createGain();
+        o.type = 'sine';
+        o.frequency.setValueAtTime(f, t);
+        g.gain.setValueAtTime(0.28, t);
+        g.gain.linearRampToValueAtTime(0, t + 0.11);
+        o.connect(g).connect(audio.destination);
+        o.start(t);
+        o.stop(t + 0.12);
+    });
+}
+
+function playIntro(){
+    const melody = [
+        [262,0.12],[330,0.12],[392,0.12],[523,0.22],
+        [392,0.12],[523,0.36]
+    ];
+    let t = audio.currentTime + 0.05;
+    melody.forEach(([freq, dur]) => {
+        const o = audio.createOscillator();
+        const g = audio.createGain();
+        o.type = 'sine';
+        o.frequency.setValueAtTime(freq, t);
+        g.gain.setValueAtTime(0.22, t);
+        g.gain.linearRampToValueAtTime(0, t + dur * 0.88);
+        o.connect(g).connect(audio.destination);
+        o.start(t);
+        o.stop(t + dur);
+        t += dur;
+    });
+}
+
+function playExtraLife(){
+    [523,659,784,1047].forEach((f, i) => {
+        const t = audio.currentTime + i * 0.08;
+        const o = audio.createOscillator();
+        const g = audio.createGain();
+        o.type = 'sine';
+        o.frequency.setValueAtTime(f, t);
+        g.gain.setValueAtTime(0.22, t);
+        g.gain.linearRampToValueAtTime(0, t + 0.14);
+        o.connect(g).connect(audio.destination);
+        o.start(t);
+        o.stop(t + 0.15);
+    });
+}
+
+function playLevelComplete(){
+    for(let i = 0; i < 8; i++){
+        const t = audio.currentTime + i * 0.09;
+        const o = audio.createOscillator();
+        const g = audio.createGain();
+        o.type = 'square';
+        o.frequency.setValueAtTime(i % 2 === 0 ? 800 : 1000, t);
+        g.gain.setValueAtTime(0.18, t);
+        g.gain.linearRampToValueAtTime(0, t + 0.09);
+        o.connect(g).connect(audio.destination);
+        o.start(t);
+        o.stop(t + 0.1);
+    }
+}
+
+function playReturnToHome(){
+    const t = audio.currentTime;
+    for(let i = 0; i < 4; i++){
+        const o = audio.createOscillator();
+        const g = audio.createGain();
+        o.type = 'sine';
+        o.frequency.setValueAtTime(800 - i * 100, t + i * 0.05);
+        g.gain.setValueAtTime(0.12, t + i * 0.05);
+        g.gain.linearRampToValueAtTime(0, t + i * 0.05 + 0.08);
+        o.connect(g).connect(audio.destination);
+        o.start(t + i * 0.05);
+        o.stop(t + i * 0.05 + 0.09);
+    }
+}
+
+function playPowerPelletChomp(){
+    const t = audio.currentTime;
+    const o = audio.createOscillator();
+    const g = audio.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(200, t);
+    o.frequency.linearRampToValueAtTime(100, t + 0.15);
+    g.gain.setValueAtTime(0.2, t);
+    g.gain.linearRampToValueAtTime(0, t + 0.18);
+    o.connect(g).connect(audio.destination);
+    o.start(t);
+    o.stop(t + 0.2);
+}
+
+function startSiren(){
+    stopSiren();
+    sirenOsc  = audio.createOscillator();
+    sirenGain = audio.createGain();
+    sirenOsc.type = 'sine';
+    sirenOsc.frequency.setValueAtTime(110, audio.currentTime);
+    sirenGain.gain.setValueAtTime(0.045, audio.currentTime);
+    sirenOsc.connect(sirenGain).connect(audio.destination);
+    sirenOsc.start();
+    _updateSiren();
+}
+
+function _updateSiren(){
+    if(!sirenOsc) return;
+    const t = audio.currentTime;
+    const base = 110 + Math.min(dotsEaten, 200) * 0.4;
+    sirenOsc.frequency.setValueAtTime(base + Math.sin(t * 3.5) * 25, t);
+    if(gameState === 'playing' && !paused) requestAnimationFrame(_updateSiren);
+}
+
+function stopSiren(){
+    if(sirenOsc){ try{ sirenOsc.stop(); }catch(e){} sirenOsc = null; }
+    sirenGain = null;
+}
+
+function startPowerSound(){
+    stopPowerSound();
+    powerOsc  = audio.createOscillator();
+    powerGain = audio.createGain();
+    powerOsc.type = 'sine';
+    powerOsc.frequency.setValueAtTime(55, audio.currentTime);
+    powerGain.gain.setValueAtTime(0.06, audio.currentTime);
+    powerOsc.connect(powerGain).connect(audio.destination);
+    powerOsc.start();
+}
+
+function stopPowerSound(){
+    if(powerOsc){ try{ powerOsc.stop(); }catch(e){} powerOsc = null; }
+    powerGain = null;
+}
+
+/* ============================================================
+   MAZE HELPERS
+   ============================================================ */
+
+function initMaze(){
+    maze = MAZE_TEMPLATE.map(r => r.slice());
+    totalDots = 0;
+    for(let r = 0; r < ROWS; r++)
+        for(let c = 0; c < COLS; c++)
+            if(maze[r][c] === DOT || maze[r][c] === PELLET) totalDots++;
+}
+
+function tileAt(c, r){
+    if(r < 0 || r >= ROWS) return WALL;
+    let cc = ((c % COLS) + COLS) % COLS;
+    return maze[r][cc];
+}
+
+function isWall(c, r){ return tileAt(c, r) === WALL; }
+
+function isWallForPac(c, r){
+    const t = tileAt(c, r);
+    return t === WALL || t === GATE;
+}
+
+function isWallForGhost(c, r, state){
+    const t = tileAt(c, r);
+    if(t === GATE){
+        return state !== 'eaten' && state !== 'exitingPen' && state !== 'enteringPen';
+    }
+    return t === WALL;
+}
+
+function canPacGo(tc, tr, dir){
+    let nc = tc + DX[dir];
+    let nr = tr + DY[dir];
+    if(nr === TUNNEL_ROW && (nc < 0 || nc >= COLS)) return true;
+    return !isWallForPac(nc, nr);
+}
+
+function canGhostGo(tc, tr, dir, state){
+    let nc = tc + DX[dir];
+    let nr = tr + DY[dir];
+    if(nr === TUNNEL_ROW && (nc < 0 || nc >= COLS)) return true;
+    return !isWallForGhost(nc, nr, state);
+}
+
+function sqDist(x1, y1, x2, y2){
+    return (x2-x1)*(x2-x1) + (y2-y1)*(y2-y1);
+}
+
+function wrapX(x){
+    if(x < -0.5) return x + COLS;
+    if(x >= COLS - 0.5) return x - COLS;
+    return x;
+}
+
+function wrapCol(c){ return ((c % COLS) + COLS) % COLS; }
+
+function px(tileX){ return tileX * TILE + TILE / 2; }
+function py(tileY){ return tileY * TILE + TOP + TILE / 2; }
+
+function speedForLevel(table){
+    const idx = Math.min(level - 1, table.length - 1);
+    return table[idx] * MAX_SPEED;
+}
+
+/* ============================================================
+   ENTITY INIT
+   ============================================================ */
+
+function makePac(){
+    return {
+        x: PAC_START.x, y: PAC_START.y,
+        tileX: PAC_START.x, tileY: PAC_START.y,
+        dir: PAC_START.dir, nextDir: PAC_START.dir,
+        mouthAng: 0, mouthOpening: true,
+        moving: false, eatSlowdown: 0
+    };
+}
+
+function makeGhost(i){
+    const s = GHOST_START[i];
+    return {
+        idx: i, name: GHOST_NAMES[i],
+        x: s.x, y: s.y,
+        tileX: Math.round(s.x), tileY: Math.round(s.y),
+        dir: s.dir,
+        state: i === 0 ? 'normal' : 'inPen',
+        penBobDir: s.dir === DOWN ? 1 : -1,
+        penBobY: s.y,
+        forceReverse: false,
+        dotCounter: 0
+    };
+}
+
+function initEntities(){
+    pac = makePac();
+    ghosts = [0,1,2,3].map(makeGhost);
+}
+
+function resetPositions(){
+    pac.x = PAC_START.x; pac.y = PAC_START.y;
+    pac.tileX = PAC_START.x; pac.tileY = PAC_START.y;
+    pac.dir = PAC_START.dir; pac.nextDir = PAC_START.dir;
+    pac.moving = false; pac.eatSlowdown = 0;
+
+    for(let i = 0; i < 4; i++){
+        const s = GHOST_START[i];
+        const g = ghosts[i];
+        g.x = s.x; g.y = s.y;
+        g.tileX = Math.round(s.x); g.tileY = Math.round(s.y);
+        g.dir = s.dir;
+        g.state = i === 0 ? 'normal' : 'inPen';
+        g.penBobDir = s.dir === DOWN ? 1 : -1;
+        g.penBobY = s.y;
+        g.forceReverse = false;
+    }
+
+    frightTimer = 0;
+    frightFlashTimer = 0;
+    ghostsEatenThisFright = 0;
+    freezeTimer = 0;
+    stopPowerSound();
+}
+
+/* ============================================================
+   SPEED HELPERS
+   ============================================================ */
+
+function getPacSpeed(){
+    if(pac.eatSlowdown > 0) return speedForLevel(SPEED_TABLE.pacDot);
+    if(frightTimer > 0) return speedForLevel(SPEED_TABLE.pacFright);
+    return speedForLevel(SPEED_TABLE.pacNorm);
+}
+
+function getGhostSpeed(g){
+    if(g.state === 'eaten') return MAX_SPEED * 1.6;
+    if(g.state === 'inPen' || g.state === 'exitingPen' || g.state === 'enteringPen')
+        return MAX_SPEED * 0.45;
+
+    const inTunnel = g.tileY === TUNNEL_ROW && (g.tileX < 6 || g.tileX > 21);
+    if(inTunnel) return speedForLevel(SPEED_TABLE.ghostTunnel);
+    if(frightTimer > 0 && g.state === 'normal') return speedForLevel(SPEED_TABLE.ghostFright);
+
+    if(g.idx === 0 && g.state === 'normal'){
+        const li = Math.min(level - 1, ELROY1_DOTS.length - 1);
+        const remaining = totalDots - dotsEaten;
+        if(remaining <= ELROY2_DOTS[li])
+            return ELROY2_SPEED[li] * MAX_SPEED;
+        if(remaining <= ELROY1_DOTS[li])
+            return ELROY1_SPEED[li] * MAX_SPEED;
+    }
+
+    return speedForLevel(SPEED_TABLE.ghostNorm);
+}
+
+/* ============================================================
+   GHOST AI — unique targeting per ghost
+   ============================================================ */
+
+function getGhostTarget(g){
+    if(g.state === 'eaten' || g.state === 'enteringPen')
+        return {x: PEN_CENTER_X, y: PEN_EXIT_Y};
+
+    if(g.state === 'exitingPen')
+        return {x: PEN_CENTER_X, y: PEN_EXIT_Y};
+
+    if(frightTimer > 0 && g.state === 'normal')
+        return {x: (Math.random()*COLS)|0, y: (Math.random()*ROWS)|0};
+
+    if(globalMode === 'scatter' && g.state === 'normal')
+        return SCATTER_TARGETS[g.idx];
+
+    const ptx = pac.tileX, pty = pac.tileY, pd = pac.dir;
+
+    switch(g.idx){
+    case 0:
+        return {x: ptx, y: pty};
+
+    case 1: {
+        let tx = ptx + DX[pd] * 4;
+        let ty = pty + DY[pd] * 4;
+        if(pd === UP) tx -= 4;
+        return {x: tx, y: ty};
+    }
+    case 2: {
+        let ax = ptx + DX[pd] * 2;
+        let ay = pty + DY[pd] * 2;
+        if(pd === UP) ax -= 2;
+        const bx = ghosts[0].tileX;
+        const by = ghosts[0].tileY;
+        return {x: ax + (ax - bx), y: ay + (ay - by)};
+    }
+    case 3: {
+        const d = sqDist(g.tileX, g.tileY, ptx, pty);
+        if(d > 64) return {x: ptx, y: pty};
+        return SCATTER_TARGETS[3];
+    }
+    }
+    return {x: ptx, y: pty};
+}
+
+function chooseGhostDir(g){
+    const tx = g.tileX, ty = g.tileY;
+    const target = getGhostTarget(g);
+    let bestDir = g.dir;
+    let bestDist = Infinity;
+
+    for(let p = 0; p < 4; p++){
+        const d = DIR_PRIORITY[p];
+        if(d === OPPOSITE[g.dir] && !g.forceReverse) continue;
+
+        let nc = tx + DX[d];
+        let nr = ty + DY[d];
+        if(nr === TUNNEL_ROW && (nc < 0 || nc >= COLS)) nc = wrapCol(nc);
+
+        if(isWallForGhost(nc, nr, g.state)) continue;
+
+        if(g.state === 'normal' && d === DOWN){
+            if((ty === 11 && (tx === 12 || tx === 15)) ||
+               (ty === 23 && (tx === 12 || tx === 15)))
+                continue;
+        }
+
+        const dd = sqDist(nc, nr, target.x, target.y);
+        if(dd < bestDist){ bestDist = dd; bestDir = d; }
+    }
+    g.forceReverse = false;
+    return bestDir;
+}
+
+/* ============================================================
+   MOVEMENT — tile-center snapping, wall checks, tunnel wrap
+   ============================================================ */
+
+function nearCenter(entity, spd){
+    const th = Math.max(spd * 0.6, 0.025);
+    return Math.abs(entity.x - Math.round(entity.x)) < th &&
+           Math.abs(entity.y - Math.round(entity.y)) < th;
+}
+
+function movePac(){
+    if(gameState !== 'playing' || freezeTimer > 0) return;
+    const spd = getPacSpeed();
+
+    if(pac.eatSlowdown > 0) pac.eatSlowdown--;
+
+    if(nearCenter(pac, spd)){
+        pac.x = Math.round(pac.x);
+        pac.y = Math.round(pac.y);
+        pac.tileX = pac.x;
+        pac.tileY = pac.y;
+
+        if(pac.nextDir !== NONE && canPacGo(pac.tileX, pac.tileY, pac.nextDir)){
+            pac.dir = pac.nextDir;
+        }
+        if(!canPacGo(pac.tileX, pac.tileY, pac.dir)){
+            pac.moving = false;
+            return;
+        }
+        pac.moving = true;
+    }
+    if(!pac.moving) return;
+
+    pac.x += DX[pac.dir] * spd;
+    pac.y += DY[pac.dir] * spd;
+    pac.x = wrapX(pac.x);
+    pac.tileX = Math.round(pac.x);
+    pac.tileY = Math.round(pac.y);
+}
+
+function moveGhostInPen(g){
+    const spd = 0.04;
+    g.penBobY += g.penBobDir * spd;
+    if(g.penBobY > PEN_BOT_Y){ g.penBobDir = -1; }
+    if(g.penBobY < PEN_TOP_Y){ g.penBobDir = 1;  }
+    g.x = GHOST_START[g.idx].x;
+    g.y = g.penBobY;
+    g.tileX = Math.round(g.x);
+    g.tileY = Math.round(g.y);
+}
+
+function moveGhostExitPen(g){
+    const spd = 0.065;
+    const cx  = PEN_CENTER_X;
+
+    if(Math.abs(g.x - cx) > 0.06){
+        g.x += (cx > g.x ? 1 : -1) * spd;
+        if(Math.abs(g.x - cx) <= spd) g.x = cx;
+        g.tileX = Math.round(g.x);
+        return;
+    }
+    g.x = cx;
+    g.y -= spd;
+
+    if(g.y <= PEN_EXIT_Y){
+        g.y = PEN_EXIT_Y;
+        g.x = Math.round(g.x);
+        g.y = Math.round(g.y);
+        g.tileX = g.x; g.tileY = g.y;
+        g.state = 'normal';
+        g.dir = LEFT;
+    } else {
+        g.tileX = Math.round(g.x);
+        g.tileY = Math.round(g.y);
+    }
+}
+
+function moveGhostEnterPen(g){
+    const spd = 0.15;
+    const cx  = PEN_CENTER_X;
+    const ty  = PEN_CENTER_Y;
+
+    if(Math.abs(g.y - PEN_EXIT_Y) > 0.15 || Math.abs(g.x - cx) > 0.6){
+        const dx = cx - g.x, dy = PEN_EXIT_Y - g.y;
+        const d = Math.sqrt(dx*dx + dy*dy);
+        if(d > 0.05){ g.x += dx/d * spd; g.y += dy/d * spd; }
+        else { g.x = cx; g.y = PEN_EXIT_Y; }
+        g.tileX = Math.round(g.x); g.tileY = Math.round(g.y);
+        return;
+    }
+
+    g.x = cx;
+    g.y += spd;
+    if(g.y >= ty){
+        g.y = ty;
+        g.state = 'inPen';
+        g.penBobY = ty;
+        g.penBobDir = -1;
+    }
+    g.tileX = Math.round(g.x);
+    g.tileY = Math.round(g.y);
+}
+
+function moveGhostNormal(g){
+    const spd = getGhostSpeed(g);
+
+    if(nearCenter(g, spd)){
+        g.x = Math.round(g.x);
+        g.y = Math.round(g.y);
+        g.tileX = g.x; g.tileY = g.y;
+        g.dir = chooseGhostDir(g);
+    }
+
+    g.x += DX[g.dir] * spd;
+    g.y += DY[g.dir] * spd;
+    g.x = wrapX(g.x);
+    g.tileX = Math.round(g.x);
+    g.tileY = Math.round(g.y);
+}
+
+function moveGhostEaten(g){
+    const spd = getGhostSpeed(g);
+
+    if(nearCenter(g, spd)){
+        g.x = Math.round(g.x);
+        g.y = Math.round(g.y);
+        g.tileX = g.x; g.tileY = g.y;
+
+        if(Math.abs(g.x - Math.round(PEN_CENTER_X)) <= 1 && g.y === PEN_EXIT_Y){
+            g.state = 'enteringPen';
+            return;
+        }
+        g.dir = chooseGhostDir(g);
+    }
+
+    g.x += DX[g.dir] * spd;
+    g.y += DY[g.dir] * spd;
+    g.x = wrapX(g.x);
+    g.tileX = Math.round(g.x);
+    g.tileY = Math.round(g.y);
+}
+
+function updateAllGhosts(){
+    if(freezeTimer > 0) return;
+    for(let i = 0; i < 4; i++){
+        const g = ghosts[i];
+        switch(g.state){
+            case 'inPen':       moveGhostInPen(g); tryGhostExit(g); break;
+            case 'exitingPen':  moveGhostExitPen(g); break;
+            case 'enteringPen': moveGhostEnterPen(g); break;
+            case 'eaten':       moveGhostEaten(g); break;
+            case 'normal':      moveGhostNormal(g); break;
+        }
+    }
+}
+
+function tryGhostExit(g){
+    if(g.idx === 0){ g.state = 'exitingPen'; return; }
+    if(dotsEaten >= GHOST_PEN_DOT_LIMITS[g.idx]){
+        g.state = 'exitingPen';
+    }
+}
+
+/* ============================================================
+   MODE TIMER — scatter / chase cycle
+   ============================================================ */
+
+function updateModeTimer(){
+    if(frightTimer > 0) return;
+    modeTimer--;
+    if(modeTimer <= 0){
+        modePhase++;
+        const li = Math.min(level - 1, 2);
+        const dur = MODE_DURATIONS[li];
+        if(modePhase >= dur.length) modePhase = dur.length - 1;
+        modeTimer = dur[modePhase];
+        globalMode = (modePhase % 2 === 0) ? 'scatter' : 'chase';
+
+        ghosts.forEach(g => { if(g.state === 'normal') g.forceReverse = true; });
+    }
+}
+
+/* ============================================================
+   FRIGHTEN (power pellet)
+   ============================================================ */
+
+function activateFright(){
+    const li = Math.min(level - 1, FRIGHT_DURATIONS.length - 1);
+    const dur = FRIGHT_DURATIONS[li];
+    if(dur === 0){
+        ghosts.forEach(g => { if(g.state === 'normal') g.forceReverse = true; });
+        return;
+    }
+    frightTimer = dur;
+    frightFlashTimer = 0;
+    ghostsEatenThisFright = 0;
+    startPowerSound(); stopSiren();
+
+    ghosts.forEach(g => { if(g.state === 'normal') g.forceReverse = true; });
+}
+
+function updateFright(){
+    if(frightTimer <= 0) return;
+    frightTimer--;
+
+    const li = Math.min(level - 1, FRIGHT_FLASHES.length - 1);
+    const flashFrames = FRIGHT_FLASHES[li] * 16;
+    if(frightTimer < flashFrames) frightFlashTimer++;
+    else frightFlashTimer = 0;
+
+    if(frightTimer <= 0){
+        frightTimer = 0;
+        frightFlashTimer = 0;
+        stopPowerSound();
+        startSiren();
+    }
+}
+
+/* ============================================================
+   DOT EATING / FRUIT / COLLISIONS
+   ============================================================ */
+
+function eatDot(){
+    const c = pac.tileX, r = pac.tileY;
+    const cell = tileAt(c, r);
+
+    if(cell === DOT){
+        maze[r][wrapCol(c)] = EMPTY;
+        score += 10;
+        dotsEaten++;
+        pac.eatSlowdown = 1;
+        playWaka();
+        checkFruit();
+        return;
+    }
+    if(cell === PELLET){
+        maze[r][wrapCol(c)] = EMPTY;
+        score += 50;
+        dotsEaten++;
+        pac.eatSlowdown = 3;
+        playPowerPelletChomp();
+        activateFright();
+        checkFruit();
+    }
+}
+
+function checkFruit(){
+    if(fruit) return;
+    if(dotsEaten === 70 || dotsEaten === 170){
+        const fi = Math.min(level - 1, FRUIT_DEFS.length - 1);
+        fruit = {
+            type: FRUIT_DEFS[fi],
+            x: FRUIT_TILE.x + 0.5,
+            y: FRUIT_TILE.y,
+            timer: 9 * 60
+        };
+    }
+}
+
+function checkCollisions(){
+    for(let i = 0; i < 4; i++){
+        const g = ghosts[i];
+        if(g.state === 'inPen' || g.state === 'exitingPen' ||
+           g.state === 'enteringPen' || g.state === 'eaten') continue;
+
+        const d = Math.abs(g.x - pac.x) + Math.abs(g.y - pac.y);
+        if(d < 0.75){
+            if(frightTimer > 0){
+                ghostsEatenThisFright++;
+                const pts = 200 * Math.pow(2, ghostsEatenThisFright - 1);
+                score += pts;
+                addPopup(g.x, g.y, pts);
+                g.state = 'eaten';
+                freezeTimer = 18;
+                playEatGhost();
+            } else {
+                pacDied();
+                return;
+            }
+        }
+    }
+
+    if(fruit){
+        if(Math.abs(pac.x - fruit.x) < 0.9 && Math.abs(pac.y - fruit.y) < 0.9){
+            score += fruit.type.pts;
+            addPopup(fruit.x, fruit.y, fruit.type.pts);
+            playEatFruit();
+            fruit = null;
+        }
+    }
+}
+
+function pacDied(){
+    stopSiren(); stopPowerSound();
+    gameState = 'dying';
+    deathAnimTimer = 0;
+    deathParticles = [];
+    for(let i = 0; i < 16; i++){
+        const angle = (Math.PI * 2 / 16) * i;
+        deathParticles.push({
+            x: px(pac.x), y: py(pac.y),
+            vx: Math.cos(angle) * (1.5 + Math.random()),
+            vy: Math.sin(angle) * (1.5 + Math.random()),
+            life: 40 + Math.random() * 20,
+            maxLife: 60,
+            size: 2 + Math.random() * 2
+        });
+    }
+    playDeath();
+}
+
+function addPopup(x, y, pts){
+    scorePopups.push({
+        x: px(x), y: py(y),
+        text: String(pts),
+        timer: 70, max: 70
+    });
+}
+
+function updatePopups(){
+    for(let i = scorePopups.length - 1; i >= 0; i--){
+        const p = scorePopups[i];
+        p.timer--;
+        p.y -= 0.4;
+        if(p.timer <= 0) scorePopups.splice(i, 1);
+    }
+}
+
+function checkWin(){
+    if(dotsEaten >= totalDots){
+        gameState = 'levelComplete';
+        levelCompleteTimer = 0;
+        stopSiren(); stopPowerSound();
+        playLevelComplete();
+    }
+}
+
+function checkExtraLife(){
+    if(!extraLifeGiven && score >= 10000){
+        extraLifeGiven = true;
+        lives++;
+        playExtraLife();
+    }
+}
+
+/* ============================================================
+   GAME STATE MACHINE
+   ============================================================ */
+
+function updatePlaying(){
+    if(paused) return;
+    if(freezeTimer > 0){ freezeTimer--; return; }
+
+    updateModeTimer();
+    updateFright();
+    movePac();
+    eatDot();
+    updateAllGhosts();
+    checkCollisions();
+    checkWin();
+    checkExtraLife();
+    updatePopups();
+    if(wakaDelay > 0) wakaDelay--;
+
+    if(fruit){
+        fruit.timer--;
+        if(fruit.timer <= 0) fruit = null;
+    }
+
+    if(score > highScore){
+        highScore = score;
+        localStorage.setItem('pacHigh', highScore);
+    }
+}
+
+function updateDying(){
+    deathAnimTimer++;
+
+    if(deathParticles){
+        for(let i = deathParticles.length - 1; i >= 0; i--){
+            const p = deathParticles[i];
+            p.x += p.vx;
+            p.y += p.vy;
+            p.vy += 0.04;
+            p.vx *= 0.98;
+            p.life--;
+            if(p.life <= 0) deathParticles.splice(i, 1);
+        }
+    }
+
+    if(deathAnimTimer >= 100){
+        deathParticles = null;
+        lives--;
+        if(lives <= 0){
+            gameState = 'gameOver';
+            showGameOver();
+        } else {
+            resetPositions();
+            gameState = 'ready';
+            readyTimer = 100;
+        }
+    }
+}
+
+function updateReady(){
+    readyTimer--;
+    if(readyTimer <= 0){
+        gameState = 'playing';
+        startSiren();
+    }
+}
+
+function updateLevelComplete(){
+    levelCompleteTimer++;
+    if(levelCompleteTimer >= 130){
+        level++;
+        dotsEaten = 0;
+        fruit = null;
+        initMaze();
+        resetPositions();
+        modePhase = 0;
+        modeTimer = MODE_DURATIONS[Math.min(level - 1, 2)][0];
+        globalMode = 'scatter';
+        frightTimer = 0; frightFlashTimer = 0;
+        scorePopups = [];
+        gameState = 'ready';
+        readyTimer = 100;
+    }
+}
+
+function update(){
+    frame++;
+    switch(gameState){
+        case 'playing':       updatePlaying(); break;
+        case 'dying':         updateDying(); break;
+        case 'ready':         updateReady(); break;
+        case 'levelComplete': updateLevelComplete(); break;
+    }
+}
+
+/* ============================================================
+   RENDERING — MAZE
+   ============================================================ */
+
+function drawMazeBackground(){
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, CW, CH);
+}
+
+function drawMazeWalls(color){
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.shadowColor = color === '#fff' ? '#fff' : '#4444ff';
+    ctx.shadowBlur = 5;
+
+    for(let r = 0; r < ROWS; r++){
+        for(let c = 0; c < COLS; c++){
+            if(maze[r][c] !== WALL) continue;
+
+            const x = c * TILE;
+            const y = r * TILE + TOP;
+            const m = TILE / 2;
+
+            const wU = (r > 0 && maze[r-1][c] === WALL);
+            const wD = (r < ROWS-1 && maze[r+1][c] === WALL);
+            const wL = (c > 0 && maze[r][c-1] === WALL);
+            const wR = (c < COLS-1 && maze[r][c+1] === WALL);
+            const wUL = (r > 0 && c > 0 && maze[r-1][c-1] === WALL);
+            const wUR = (r > 0 && c < COLS-1 && maze[r-1][c+1] === WALL);
+            const wDL = (r < ROWS-1 && c > 0 && maze[r+1][c-1] === WALL);
+            const wDR = (r < ROWS-1 && c < COLS-1 && maze[r+1][c+1] === WALL);
+
+            if(!wU){
+                ctx.beginPath();
+                ctx.moveTo(wL ? x : x + m, y + 1);
+                ctx.lineTo(wR ? x + TILE : x + m, y + 1);
+                ctx.stroke();
+            }
+            if(!wD){
+                ctx.beginPath();
+                ctx.moveTo(wL ? x : x + m, y + TILE - 1);
+                ctx.lineTo(wR ? x + TILE : x + m, y + TILE - 1);
+                ctx.stroke();
+            }
+            if(!wL){
+                ctx.beginPath();
+                ctx.moveTo(x + 1, wU ? y : y + m);
+                ctx.lineTo(x + 1, wD ? y + TILE : y + m);
+                ctx.stroke();
+            }
+            if(!wR){
+                ctx.beginPath();
+                ctx.moveTo(x + TILE - 1, wU ? y : y + m);
+                ctx.lineTo(x + TILE - 1, wD ? y + TILE : y + m);
+                ctx.stroke();
+            }
+
+            if(!wU && !wL){
+                ctx.beginPath();
+                ctx.arc(x + m, y + m, m - 1, Math.PI, Math.PI * 1.5);
+                ctx.stroke();
+            }
+            if(!wU && !wR){
+                ctx.beginPath();
+                ctx.arc(x + m, y + m, m - 1, Math.PI * 1.5, Math.PI * 2);
+                ctx.stroke();
+            }
+            if(!wD && !wL){
+                ctx.beginPath();
+                ctx.arc(x + m, y + m, m - 1, Math.PI * 0.5, Math.PI);
+                ctx.stroke();
+            }
+            if(!wD && !wR){
+                ctx.beginPath();
+                ctx.arc(x + m, y + m, m - 1, 0, Math.PI * 0.5);
+                ctx.stroke();
+            }
+
+            if(wU && wL && !wUL){
+                ctx.beginPath();
+                ctx.arc(x, y, m - 1, 0, Math.PI * 0.5);
+                ctx.stroke();
+            }
+            if(wU && wR && !wUR){
+                ctx.beginPath();
+                ctx.arc(x + TILE, y, m - 1, Math.PI * 0.5, Math.PI);
+                ctx.stroke();
+            }
+            if(wD && wL && !wDL){
+                ctx.beginPath();
+                ctx.arc(x, y + TILE, m - 1, Math.PI * 1.5, Math.PI * 2);
+                ctx.stroke();
+            }
+            if(wD && wR && !wDR){
+                ctx.beginPath();
+                ctx.arc(x + TILE, y + TILE, m - 1, Math.PI, Math.PI * 1.5);
+                ctx.stroke();
+            }
+        }
+    }
+    ctx.restore();
+}
+
+function drawDots(){
+    for(let r = 0; r < ROWS; r++){
+        for(let c = 0; c < COLS; c++){
+            const cell = maze[r][c];
+            if(cell !== DOT && cell !== PELLET) continue;
+
+            const x = c * TILE + TILE / 2;
+            const y = r * TILE + TOP + TILE / 2;
+
+            if(cell === DOT){
+                ctx.fillStyle = '#ffb8ae';
+                ctx.fillRect(x - 1.5, y - 1.5, 3, 3);
+            } else {
+                const pulse = 0.65 + 0.35 * Math.sin(frame * 0.09);
+                ctx.fillStyle = '#ffb8ae';
+                ctx.beginPath();
+                ctx.arc(x, y, 5 * pulse, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+    }
+}
+
+function drawGate(){
+    const gy = GATE_ROW * TILE + TOP + TILE * 0.48;
+    const x1 = 13 * TILE + 1;
+    const x2 = 15 * TILE - 1;
+    ctx.strokeStyle = '#ffb8ff';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(x1, gy);
+    ctx.lineTo(x2, gy);
+    ctx.stroke();
+}
+
+function drawMazeInnerWalls(color){
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.lineCap = 'round';
+    ctx.globalAlpha = 0.25;
+
+    const offset = 4;
+    for(let r = 0; r < ROWS; r++){
+        for(let c = 0; c < COLS; c++){
+            if(maze[r][c] !== WALL) continue;
+
+            const x = c * TILE;
+            const y = r * TILE + TOP;
+            const m = TILE / 2;
+
+            const wU = (r > 0 && maze[r-1][c] === WALL);
+            const wD = (r < ROWS-1 && maze[r+1][c] === WALL);
+            const wL = (c > 0 && maze[r][c-1] === WALL);
+            const wR = (c < COLS-1 && maze[r][c+1] === WALL);
+
+            if(!wU){
+                ctx.beginPath();
+                ctx.moveTo(wL ? x : x + m, y + offset);
+                ctx.lineTo(wR ? x + TILE : x + m, y + offset);
+                ctx.stroke();
+            }
+            if(!wD){
+                ctx.beginPath();
+                ctx.moveTo(wL ? x : x + m, y + TILE - offset);
+                ctx.lineTo(wR ? x + TILE : x + m, y + TILE - offset);
+                ctx.stroke();
+            }
+            if(!wL){
+                ctx.beginPath();
+                ctx.moveTo(x + offset, wU ? y : y + m);
+                ctx.lineTo(x + offset, wD ? y + TILE : y + m);
+                ctx.stroke();
+            }
+            if(!wR){
+                ctx.beginPath();
+                ctx.moveTo(x + TILE - offset, wU ? y : y + m);
+                ctx.lineTo(x + TILE - offset, wD ? y + TILE : y + m);
+                ctx.stroke();
+            }
+
+            if(!wU && !wL){
+                ctx.beginPath();
+                ctx.arc(x + m, y + m, m - offset, Math.PI, Math.PI * 1.5);
+                ctx.stroke();
+            }
+            if(!wU && !wR){
+                ctx.beginPath();
+                ctx.arc(x + m, y + m, m - offset, Math.PI * 1.5, Math.PI * 2);
+                ctx.stroke();
+            }
+            if(!wD && !wL){
+                ctx.beginPath();
+                ctx.arc(x + m, y + m, m - offset, Math.PI * 0.5, Math.PI);
+                ctx.stroke();
+            }
+            if(!wD && !wR){
+                ctx.beginPath();
+                ctx.arc(x + m, y + m, m - offset, 0, Math.PI * 0.5);
+                ctx.stroke();
+            }
+        }
+    }
+    ctx.restore();
+}
+
+function drawGhostHouseInterior(){
+    ctx.save();
+    ctx.globalAlpha = 0.06;
+    ctx.fillStyle = '#223';
+    const x1 = 10 * TILE + 2;
+    const y1 = 12 * TILE + TOP + 2;
+    const w = 8 * TILE - 4;
+    const h = 5 * TILE - 4;
+    ctx.fillRect(x1, y1, w, h);
+    ctx.restore();
+}
+
+function drawMaze(){
+    drawMazeBackground();
+
+    if(gameState === 'levelComplete'){
+        const flash = ((levelCompleteTimer / 10) | 0) % 2 === 0;
+        drawMazeWalls(flash ? '#fff' : '#2121de');
+        if(!flash) drawMazeInnerWalls('#2121de');
+    } else {
+        drawMazeWalls('#2121de');
+        drawMazeInnerWalls('#2121de');
+    }
+
+    drawGhostHouseInterior();
+    drawDots();
+    drawGate();
+    drawTunnelDarkness();
+}
+
+function drawTunnelDarkness(){
+    const ty = TUNNEL_ROW * TILE + TOP;
+    const grad1 = ctx.createLinearGradient(0, ty, 5 * TILE, ty);
+    grad1.addColorStop(0, 'rgba(0,0,0,0.7)');
+    grad1.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad1;
+    ctx.fillRect(0, ty, 5 * TILE, TILE);
+
+    const grad2 = ctx.createLinearGradient(CW, ty, CW - 5 * TILE, ty);
+    grad2.addColorStop(0, 'rgba(0,0,0,0.7)');
+    grad2.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad2;
+    ctx.fillRect(CW - 5 * TILE, ty, 5 * TILE, TILE);
+}
+
+function drawMazeGlow(){
+    if(gameState === 'levelComplete') return;
+    ctx.save();
+    ctx.globalAlpha = 0.015;
+    ctx.fillStyle = '#2121ff';
+    for(let r = 0; r < ROWS; r++){
+        for(let c = 0; c < COLS; c++){
+            if(maze[r][c] !== WALL) continue;
+            ctx.fillRect(c * TILE - 2, r * TILE + TOP - 2, TILE + 4, TILE + 4);
+        }
+    }
+    ctx.restore();
+}
+
+/* ============================================================
+   RENDERING — PAC-MAN
+   ============================================================ */
+
+function drawPacMan(){
+    if(gameState === 'dying'){
+        drawPacDeath();
+        return;
+    }
+    if(gameState === 'levelComplete') return;
+
+    const cx = px(pac.x);
+    const cy = py(pac.y);
+    const radius = TILE * 0.52;
+
+    if(pac.moving){
+        pac.mouthAng += pac.mouthOpening ? 0.14 : -0.14;
+        if(pac.mouthAng > 0.85) pac.mouthOpening = false;
+        if(pac.mouthAng < 0.04) pac.mouthOpening = true;
+    } else {
+        pac.mouthAng = 0.12;
+    }
+    const mouth = pac.mouthAng;
+
+    let angle = 0;
+    if(pac.dir === RIGHT)     angle = 0;
+    else if(pac.dir === DOWN) angle = Math.PI * 0.5;
+    else if(pac.dir === LEFT) angle = Math.PI;
+    else if(pac.dir === UP)   angle = Math.PI * 1.5;
+
+    ctx.save();
+    ctx.shadowColor = '#ff0';
+    ctx.shadowBlur = 4;
+    ctx.fillStyle = '#ffff00';
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, radius, angle + mouth, angle + Math.PI * 2 - mouth);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+}
+
+function drawPacDeath(){
+    const cx = px(pac.x);
+    const cy = py(pac.y);
+    const radius = TILE * 0.52;
+    const t = Math.min(deathAnimTimer / 80, 1);
+
+    if(t < 1){
+        const mouthAngle = t * Math.PI;
+        const baseAngle = Math.PI * 0.5;
+        const r = radius * (1 - t * 0.4);
+
+        ctx.save();
+        ctx.globalAlpha = 1 - t * 0.3;
+        ctx.fillStyle = '#ffff00';
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        if(mouthAngle < Math.PI - 0.01){
+            ctx.arc(cx, cy, r, baseAngle + mouthAngle, baseAngle + Math.PI * 2 - mouthAngle);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+    }
+
+    if(deathParticles && deathAnimTimer > 30){
+        deathParticles.forEach(p => {
+            const alpha = p.life / p.maxLife;
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            ctx.fillStyle = '#ff0';
+            ctx.shadowColor = '#ff0';
+            ctx.shadowBlur = 4;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        });
+    }
+}
+
+/* ============================================================
+   RENDERING — GHOSTS
+   ============================================================ */
+
+function drawGhostBody(cx, cy, color){
+    const r = TILE * 0.5;
+    const bY = cy + r * 0.55;
+    const animFrame = (frame / 6 | 0) % 2;
+    const segs = 3;
+    const segW = (r * 2) / segs;
+
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(cx, cy - 2, r, Math.PI, 0, false);
+    ctx.lineTo(cx + r, bY);
+
+    if(animFrame === 0){
+        for(let i = segs; i >= 0; i--){
+            const sx = cx + r - i * segW;
+            const peak = (i % 2 === 0) ? bY + 4 : bY - 1;
+            if(i === segs) ctx.lineTo(sx, bY);
+            else ctx.quadraticCurveTo(sx + segW * 0.5, peak, sx, bY);
+        }
+    } else {
+        const shift = segW * 0.5;
+        for(let i = segs; i >= 0; i--){
+            const sx = cx + r - i * segW - shift;
+            const peak = (i % 2 === 0) ? bY - 1 : bY + 4;
+            if(i === segs) ctx.lineTo(cx + r, bY);
+            else ctx.quadraticCurveTo(sx + segW * 0.5, peak, Math.max(cx - r, sx), bY);
+        }
+        ctx.lineTo(cx - r, bY);
+    }
+
+    ctx.closePath();
+    ctx.fill();
+}
+
+function drawGhostShine(cx, cy){
+    ctx.save();
+    ctx.globalAlpha = 0.15;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.ellipse(cx - 2, cy - 6, 3, 4, -0.3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+}
+
+function drawGhostEyes(cx, cy, dir){
+    const offX = 5, offY = -3;
+    const eR = 3.8, pR = 1.8;
+
+    let pdx = 0, pdy = 0;
+    if(dir === LEFT) pdx = -1.8;
+    if(dir === RIGHT) pdx = 1.8;
+    if(dir === UP) pdy = -2;
+    if(dir === DOWN) pdy = 2;
+
+    [-1, 1].forEach(side => {
+        const ex = cx + side * offX;
+        const ey = cy + offY;
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.arc(ex, ey, eR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#2121de';
+        ctx.beginPath();
+        ctx.arc(ex + pdx, ey + pdy, pR, 0, Math.PI * 2);
+        ctx.fill();
+    });
+}
+
+function drawFrightenedGhost(cx, cy, flashing){
+    const bodyColor = flashing ? FRIGHT_FLASH_CLR : FRIGHT_COLOR;
+    drawGhostBody(cx, cy, bodyColor);
+
+    const detailColor = flashing ? '#f00' : '#ffb8ae';
+
+    ctx.fillStyle = detailColor;
+    [-4, 4].forEach(ox => {
+        ctx.beginPath();
+        ctx.arc(cx + ox, cy - 4, 2, 0, Math.PI * 2);
+        ctx.fill();
+    });
+
+    ctx.strokeStyle = detailColor;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    const mw = 7;
+    const my = cy + 3;
+    ctx.moveTo(cx - mw, my);
+    for(let i = 0; i <= 4; i++){
+        const mx = cx - mw + i * (mw * 2 / 4);
+        const mmy = my + (i % 2 === 0 ? 0 : 3);
+        ctx.lineTo(mx, mmy);
+    }
+    ctx.stroke();
+}
+
+function drawGhosts(){
+    if(gameState === 'levelComplete') return;
+
+    for(let i = 0; i < 4; i++){
+        const g = ghosts[i];
+        const cx = px(g.x);
+        const cy = py(g.y);
+
+        if(g.state === 'eaten' || g.state === 'enteringPen'){
+            drawGhostEyes(cx, cy, g.dir);
+            continue;
+        }
+
+        if(frightTimer > 0 && g.state === 'normal'){
+            const fl = frightFlashTimer > 0 && ((frightFlashTimer / 8) | 0) % 2 === 1;
+            drawFrightenedGhost(cx, cy, fl);
+        } else {
+            ctx.save();
+            ctx.shadowColor = GHOST_COLORS[i];
+            ctx.shadowBlur = 3;
+            drawGhostBody(cx, cy, GHOST_COLORS[i]);
+            ctx.restore();
+            drawGhostShine(cx, cy);
+            drawGhostEyes(cx, cy, g.dir);
+        }
+    }
+}
+
+/* ============================================================
+   RENDERING — FRUIT
+   ============================================================ */
+
+function drawFruit(){
+    if(!fruit) return;
+
+    const cx = px(fruit.x);
+    const cy = py(fruit.y);
+    const r  = TILE * 0.38;
+
+    ctx.save();
+    ctx.shadowColor = fruit.type.color;
+    ctx.shadowBlur = 6;
+
+    switch(fruit.type.name){
+    case 'cherry':
+        ctx.fillStyle = '#f00';
+        ctx.beginPath(); ctx.arc(cx - 3, cy + 2, 3.5, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(cx + 3, cy + 2, 3.5, 0, Math.PI*2); ctx.fill();
+        ctx.strokeStyle = '#0a0'; ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(cx - 2, cy - 1);
+        ctx.quadraticCurveTo(cx, cy - 8, cx + 2, cy - 1);
+        ctx.stroke();
+        break;
+
+    case 'strawberry':
+        ctx.fillStyle = '#f44';
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - r);
+        ctx.lineTo(cx + r, cy + r*0.3);
+        ctx.quadraticCurveTo(cx, cy + r*1.2, cx - r, cy + r*0.3);
+        ctx.closePath(); ctx.fill();
+        ctx.fillStyle = '#0a0';
+        ctx.fillRect(cx - 3, cy - r - 2, 6, 3);
+        break;
+
+    case 'orange':
+        ctx.fillStyle = '#f90';
+        ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = '#0a0'; ctx.fillRect(cx-1, cy-r-2, 2, 3);
+        break;
+
+    case 'apple':
+        ctx.fillStyle = '#f00';
+        ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = '#0a0'; ctx.fillRect(cx-1, cy-r-2, 2, 4);
+        break;
+
+    case 'melon':
+        ctx.fillStyle = '#0d0';
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, r*1.2, r*0.9, 0, 0, Math.PI*2);
+        ctx.fill();
+        ctx.strokeStyle = '#080'; ctx.lineWidth = 1;
+        for(let a = 0; a < 4; a++){
+            ctx.beginPath();
+            ctx.moveTo(cx, cy - r*0.9);
+            ctx.quadraticCurveTo(cx + (a-1.5)*4, cy, cx, cy + r*0.9);
+            ctx.stroke();
+        }
+        break;
+
+    case 'bell':
+        ctx.fillStyle = '#ff0';
+        ctx.beginPath();
+        ctx.moveTo(cx - r, cy + r*0.3);
+        ctx.quadraticCurveTo(cx - r, cy - r, cx, cy - r);
+        ctx.quadraticCurveTo(cx + r, cy - r, cx + r, cy + r*0.3);
+        ctx.lineTo(cx - r, cy + r*0.3);
+        ctx.fill();
+        ctx.fillRect(cx - r, cy + r*0.3, r*2, 3);
+        break;
+
+    case 'key':
+        ctx.fillStyle = '#0ff';
+        ctx.beginPath(); ctx.arc(cx, cy - r*0.4, r*0.4, 0, Math.PI*2); ctx.fill();
+        ctx.fillRect(cx - 1.5, cy - r*0.1, 3, r*1.2);
+        ctx.fillRect(cx, cy + r*0.4, 4, 2);
+        ctx.fillRect(cx, cy + r*0.7, 3, 2);
+        break;
+
+    default:
+        ctx.fillStyle = fruit.type.color;
+        ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
+    }
+
+    ctx.restore();
+}
+
+/* ============================================================
+   RENDERING — SCORE POPUPS
+   ============================================================ */
+
+function drawPopups(){
+    scorePopups.forEach(p => {
+        const alpha = p.timer / p.max;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = '#0ff';
+        ctx.font = 'bold 12px "Courier New"';
+        ctx.textAlign = 'center';
+        ctx.shadowColor = '#0ff';
+        ctx.shadowBlur = 4;
+        ctx.fillText(p.text, p.x, p.y);
+        ctx.restore();
+    });
+}
+
+/* ============================================================
+   RENDERING — HUD (score, lives, level indicator, fruit history)
+   ============================================================ */
+
+function drawHUD(){
+    ctx.font = '13px "Courier New"';
+
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'left';
+    ctx.fillText('1UP', 30, 14);
+    ctx.fillStyle = '#ff0';
+    ctx.fillText(String(score).padStart(8, ' '), 10, 32);
+
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.fillText('HIGH SCORE', CW / 2, 14);
+    ctx.fillStyle = '#ff0';
+    ctx.fillText(String(highScore).padStart(8, ' '), CW / 2, 32);
+
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'right';
+    ctx.fillText('LEVEL ' + level, CW - 10, 14);
+
+    const livesY = CH - 22;
+    for(let i = 0; i < Math.min(lives - 1, 5); i++){
+        const lx = 18 + i * 26;
+        ctx.fillStyle = '#ff0';
+        ctx.beginPath();
+        ctx.moveTo(lx, livesY);
+        ctx.arc(lx, livesY, 8, 0.25, Math.PI * 2 - 0.25);
+        ctx.closePath();
+        ctx.fill();
+    }
+
+    const fruitIdx = Math.min(level - 1, FRUIT_DEFS.length - 1);
+    for(let i = Math.max(0, fruitIdx - 6); i <= fruitIdx; i++){
+        const fx = CW - 20 - (fruitIdx - i) * 22;
+        ctx.fillStyle = FRUIT_DEFS[i].color;
+        ctx.beginPath();
+        ctx.arc(fx, livesY, 7, 0, Math.PI * 2);
+        ctx.fill();
+    }
+}
+
+/* ============================================================
+   RENDERING — READY / GAME TEXT
+   ============================================================ */
+
+function drawReady(){
+    if(gameState !== 'ready') return;
+
+    if(readyTimer > 100){
+        ctx.fillStyle = '#0ff';
+        ctx.font = 'bold 15px "Courier New"';
+        ctx.textAlign = 'center';
+        ctx.fillText('PLAYER ONE', CW / 2, 14 * TILE + TOP);
+    }
+
+    const blink = (readyTimer / 12 | 0) % 2 === 0;
+    if(!blink) return;
+    ctx.fillStyle = '#ff0';
+    ctx.font = 'bold 18px "Courier New"';
+    ctx.textAlign = 'center';
+    ctx.shadowColor = '#ff0';
+    ctx.shadowBlur = 8;
+    ctx.fillText('READY!', CW / 2, 17.5 * TILE + TOP);
+    ctx.shadowBlur = 0;
+}
+
+function drawGameText(){
+    if(gameState === 'gameOver'){
+        ctx.save();
+        ctx.fillStyle = '#f00';
+        ctx.font = 'bold 18px "Courier New"';
+        ctx.textAlign = 'center';
+        ctx.shadowColor = '#f00';
+        ctx.shadowBlur = 8;
+        ctx.fillText('GAME  OVER', CW / 2, 17.5 * TILE + TOP);
+        ctx.restore();
+    }
+}
+
+function drawFreezeScore(){
+    if(freezeTimer <= 0) return;
+    if(ghostsEatenThisFright <= 0) return;
+    const pts = 200 * Math.pow(2, ghostsEatenThisFright - 1);
+    for(let i = 0; i < 4; i++){
+        const g = ghosts[i];
+        if(g.state === 'eaten' || g.state === 'enteringPen'){
+            ctx.fillStyle = '#0ff';
+            ctx.font = 'bold 11px "Courier New"';
+            ctx.textAlign = 'center';
+            ctx.fillText(String(pts), px(g.x), py(g.y) + 3);
+            break;
+        }
+    }
+}
+
+/* ============================================================
+   RENDER FRAME
+   ============================================================ */
+
+function drawCorneringIndicator(){
+    if(gameState !== 'playing' || !pac.moving) return;
+    if(pac.nextDir === pac.dir || pac.nextDir === NONE) return;
+
+    const spd = getPacSpeed();
+    if(!nearCenter(pac, spd)){
+        const tx = pac.tileX + DX[pac.dir];
+        const ty = pac.tileY + DY[pac.dir];
+        if(canPacGo(tx, ty, pac.nextDir)){
+            ctx.save();
+            ctx.globalAlpha = 0.25;
+            ctx.fillStyle = '#ff0';
+            const cx = px(tx + DX[pac.nextDir] * 0.5);
+            const cy = py(ty + DY[pac.nextDir] * 0.5);
+            ctx.beginPath();
+            ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+    }
+}
+
+function drawTargetLines(){
+    if(!window._debugTargets) return;
+    ctx.save();
+    ctx.globalAlpha = 0.3;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    for(let i = 0; i < 4; i++){
+        const g = ghosts[i];
+        if(g.state !== 'normal') continue;
+        const target = getGhostTarget(g);
+        ctx.strokeStyle = GHOST_COLORS[i];
+        ctx.beginPath();
+        ctx.moveTo(px(g.x), py(g.y));
+        ctx.lineTo(px(target.x), py(target.y));
+        ctx.stroke();
+
+        ctx.fillStyle = GHOST_COLORS[i];
+        ctx.fillRect(px(target.x) - 3, py(target.y) - 3, 6, 6);
+    }
+    ctx.setLineDash([]);
+    ctx.restore();
+}
+
+function drawScreenBorder(){
+    ctx.save();
+    ctx.strokeStyle = '#111133';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(0, TOP - 2, CW, ROWS * TILE + 4);
+    ctx.restore();
+}
+
+function drawLevelIndicator(){
+    if(gameState !== 'playing') return;
+    ctx.save();
+    ctx.globalAlpha = 0.4;
+    ctx.fillStyle = '#fff';
+    ctx.font = '10px "Courier New"';
+    ctx.textAlign = 'center';
+    const remaining = totalDots - dotsEaten;
+    ctx.fillText(remaining + ' DOTS LEFT', CW / 2, CH - 6);
+    ctx.restore();
+}
+
+function render(){
+    drawMaze();
+    drawMazeGlow();
+    drawScreenBorder();
+    drawFruit();
+    drawPacMan();
+    drawGhosts();
+    drawFreezeScore();
+    drawPopups();
+    drawCorneringIndicator();
+    drawTargetLines();
+    drawHUD();
+    drawLevelIndicator();
+    drawReady();
+    drawGameText();
+}
+
+/* ============================================================
+   GAME OVER / START / RESTART
+   ============================================================ */
+
+function showGameOver(){
+    if(score > highScore){
+        highScore = score;
+        localStorage.setItem('pacHigh', highScore);
+    }
+    document.getElementById('finalScore').textContent = score;
+    document.getElementById('hiMsg').style.display =
+        score >= highScore && score > 0 ? 'block' : 'none';
+
+    setTimeout(() => {
+        overlay.classList.add('active');
+        overScr.classList.add('vis');
+        startScr.classList.remove('vis');
+    }, 1500);
+}
+
+function startGame(){
+    resumeAudio();
+    overlay.classList.remove('active');
+    startScr.classList.remove('vis');
+    overScr.classList.remove('vis');
+
+    score = 0; lives = 3; level = 1;
+    dotsEaten = 0; extraLifeGiven = false;
+    frame = 0; paused = false;
+    wakaToggle = false; wakaDelay = 0;
+    scorePopups = []; fruit = null;
+    freezeTimer = 0; deathParticles = null;
+    corneringBuffer = NONE;
+
+    initMaze();
+    initEntities();
+
+    modePhase = 0;
+    modeTimer = MODE_DURATIONS[0][0];
+    globalMode = 'scatter';
+    frightTimer = 0; frightFlashTimer = 0;
+    ghostsEatenThisFright = 0;
+
+    gameState = 'ready';
+    readyTimer = 130;
+    playIntro();
+}
+
+function restartGame(){
+    overlay.classList.remove('active');
+    overScr.classList.remove('vis');
+    startGame();
+}
+
+/* ============================================================
+   INPUT — KEYBOARD
+   ============================================================ */
+
+document.addEventListener('keydown', function(e){
+    resumeAudio();
+
+    if(e.key === 'p' || e.key === 'P'){
+        if(gameState === 'playing'){
+            paused = !paused;
+            pauseOv.classList.toggle('vis', paused);
+            if(paused){ stopSiren(); stopPowerSound(); }
+            else {
+                if(frightTimer > 0) startPowerSound();
+                else startSiren();
+            }
+        }
+        e.preventDefault();
+        return;
+    }
+
+    if(gameState !== 'playing' && gameState !== 'ready') return;
+
+    let dir = -1;
+    switch(e.key){
+        case 'ArrowLeft':  case 'a': case 'A': dir = LEFT;  break;
+        case 'ArrowRight': case 'd': case 'D': dir = RIGHT; break;
+        case 'ArrowUp':    case 'w': case 'W': dir = UP;    break;
+        case 'ArrowDown':  case 's': case 'S': dir = DOWN;  break;
+    }
+    if(dir >= 0){
+        pac.nextDir = dir;
+        e.preventDefault();
+    }
+});
+
+/* ============================================================
+   INPUT — TOUCH / SWIPE
+   ============================================================ */
+
+let touchSX = 0, touchSY = 0;
+
+document.addEventListener('touchstart', function(e){
+    resumeAudio();
+    const t = e.touches[0];
+    touchSX = t.clientX;
+    touchSY = t.clientY;
+    e.preventDefault();
+}, {passive: false});
+
+document.addEventListener('touchmove', function(e){
+    e.preventDefault();
+}, {passive: false});
+
+document.addEventListener('touchend', function(e){
+    const t = e.changedTouches[0];
+    const dx = t.clientX - touchSX;
+    const dy = t.clientY - touchSY;
+    if(Math.abs(dx) < 18 && Math.abs(dy) < 18) return;
+
+    if(Math.abs(dx) > Math.abs(dy)){
+        pac.nextDir = dx > 0 ? RIGHT : LEFT;
+    } else {
+        pac.nextDir = dy > 0 ? DOWN : UP;
+    }
+}, {passive: false});
+
+/* ============================================================
+   MAIN LOOP — fixed 60fps logic, render at display rate
+   ============================================================ */
+
+function gameLoop(ts){
+    requestAnimationFrame(gameLoop);
+    if(!lastFrameTime){ lastFrameTime = ts; return; }
+
+    let dt = ts - lastFrameTime;
+    lastFrameTime = ts;
+    if(dt > 100) dt = STEP;
+
+    if(gameState === 'idle'){ render(); return; }
+    if(paused){ render(); return; }
+
+    accumulator += dt;
+    let steps = 0;
+    while(accumulator >= STEP && steps < 4){
+        update();
+        accumulator -= STEP;
+        steps++;
+    }
+    if(accumulator > STEP * 3) accumulator = 0;
+
+    render();
+}
+
+/* ============================================================
+   BOOTSTRAP
+   ============================================================ */
+
+gameState = 'idle';
+lastFrameTime = 0;
+accumulator = 0;
+score = 0; lives = 3; level = 1;
+dotsEaten = 0; frame = 0;
+paused = false; wakaToggle = false; wakaDelay = 0;
+scorePopups = []; fruit = null;
+extraLifeGiven = false; freezeTimer = 0;
+deathParticles = null; corneringBuffer = NONE;
+frightTimer = 0; frightFlashTimer = 0;
+ghostsEatenThisFright = 0;
+modePhase = 0;
+modeTimer = MODE_DURATIONS[0][0];
+globalMode = 'scatter';
+
+initMaze();
+initEntities();
+render();
+requestAnimationFrame(gameLoop);
+
+})();
+</script>
+</body>
+</html>

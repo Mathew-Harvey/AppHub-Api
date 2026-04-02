@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Whiteboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1e1e1e;
+            color: #fff;
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #toolbar {
+            background: #2d2d2d;
+            padding: 10px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+            border-bottom: 2px solid #444;
+            z-index: 100;
+        }
+
+        .tool-group {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        button {
+            padding: 10px 14px;
+            background: #3a3a3a;
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            background: #4a4a4a;
+        }
+
+        button.active {
+            background: #0a84ff;
+            box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.3);
+        }
+
+        .color-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border: 3px solid #555;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .color-btn.active {
+            border: 3px solid #fff;
+            transform: scale(1.15);
+        }
+
+        #canvas-container {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+            background: #f8f9fa;
+        }
+
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            touch-action: none;
+            z-index: 10;
+        }
+
+        #grid {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+            background-image: 
+                linear-gradient(#ddd 1px, transparent 1px),
+                linear-gradient(90deg, #ddd 1px, transparent 1px);
+            background-size: 40px 40px;
+            opacity: 0.6;
+            z-index: 5;
+        }
+
+        #text-input {
+            position: absolute;
+            background: white;
+            border: 2px solid #0a84ff;
+            padding: 8px;
+            font-size: 18px;
+            font-family: Arial, sans-serif;
+            min-width: 100px;
+            z-index: 200;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            display: none;
+            resize: both;
+            overflow: hidden;
+        }
+
+        .note {
+            position: absolute;
+            background: #fff9b1;
+            padding: 12px;
+            box-shadow: 3px 3px 8px rgba(0,0,0,0.3);
+            min-width: 180px;
+            min-height: 120px;
+            font-family: 'Comic Sans MS', cursive;
+            font-size: 16px;
+            cursor: move;
+            z-index: 50;
+            border: 2px solid #f0d000;
+            user-select: none;
+        }
+
+        .note-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 12px;
+            color: #666;
+        }
+
+        .note-close {
+            cursor: pointer;
+            color: #f00;
+            font-weight: bold;
+        }
+
+        #status {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            background: rgba(0,0,0,0.6);
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            z-index: 100;
+        }
+
+        .timer {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: #000;
+            color: #0f0;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 24px;
+            z-index: 100;
+            border: 2px solid #0f0;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="toolbar">
+        <div class="tool-group">
+            <button id="pen" class="active">✏️ Pen</button>
+            <button id="eraser">🧼 Eraser</button>
+            <button id="text">🔤 Text</button>
+            <button id="note">📝 Sticky Note</button>
+        </div>
+
+        <div class="tool-group">
+            <button id="color-black" class="color-btn" style="background: #1e1e1e;" data-color="#1e1e1e"></button>
+            <button id="color-red" class="color-btn" style="background: #ef4444;" data-color="#ef4444"></button>
+            <button id="color-blue" class="color-btn" style="background: #3b82f6;" data-color="#3b82f6"></button>
+            <button id="color-green" class="color-btn" style="background: #22c55e;" data-color="#22c55e"></button>
+            <button id="color-yellow" class="color-btn" style="background: #eab308;" data-color="#eab308"></button>
+            <button id="color-purple" class="color-btn" style="background: #a855f7;" data-color="#a855f7"></button>
+            <button id="color-orange" class="color-btn" style="background: #f97316;" data-color="#f97316"></button>
+        </div>
+
+        <div class="tool-group">
+            <button id="clear">🗑️ Clear All</button>
+            <button id="undo">↩️ Undo</button>
+            <button id="print-btn">🖨️ Print Whiteboard</button>
+        </div>
+
+        <div class="tool-group">
+            <button id="grid-btn">📐 Grid</button>
+            <button id="timer-btn">⏱️ Timer</button>
+        </div>
+
+        <div class="tool-group">
+            <label>Size: <input type="range" id="size-slider" min="2" max="50" value="8"></label>
+            <span id="size-value">8</span>
+        </div>
+    </div>
+
+    <div id="canvas-container">
+        <canvas id="canvas"></canvas>
+        <div id="grid"></div>
+        <div id="text-input" contenteditable="true"></div>
+        <div class="timer" id="timer-display">00:00</div>
+    </div>
+
+    <div id="status">Ready • Pen tool</div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const grid = document.getElementById('grid');
+        const textInput = document.getElementById('text-input');
+        const timerDisplay = document.getElementById('timer-display');
+
+        let isDrawing = false;
+        let lastX = 0;
+        let lastY = 0;
+        let currentTool = 'pen';
+        let currentColor = '#1e1e1e';
+        let lineWidth = 8;
+        let gridEnabled = false;
+        let timerInterval = null;
+        let seconds = 0;
+        let undoStack = [];
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight - 70;
+            grid.style.width = canvas.width + 'px';
+            grid.style.height = canvas.height + 'px';
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        function saveState() {
+            undoStack.push(canvas.toDataURL());
+            if (undoStack.length > 50) undoStack.shift();
+        }
+
+        // Tool buttons
+        document.getElementById('pen').addEventListener('click', () => {
+            currentTool = 'pen';
+            setActiveTool('pen');
+        });
+
+        document.getElementById('eraser').addEventListener('click', () => {
+            currentTool = 'eraser';
+            setActiveTool('eraser');
+        });
+
+        document.getElementById('text').addEventListener('click', () => {
+            currentTool = 'text';
+            setActiveTool('text');
+        });
+
+        document.getElementById('note').addEventListener('click', () => {
+            createStickyNote();
+        });
+
+        function setActiveTool(tool) {
+            document.querySelectorAll('#toolbar button').forEach(btn => btn.classList.remove('active'));
+            if (tool === 'pen') document.getElementById('pen').classList.add('active');
+            if (tool === 'eraser') document.getElementById('eraser').classList.add('active');
+            if (tool === 'text') document.getElementById('text').classList.add('active');
+        }
+
+        // Colors
+        document.querySelectorAll('.color-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                currentColor = btn.dataset.color;
+                document.querySelectorAll('.color-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                if (currentTool === 'eraser') currentTool = 'pen';
+            });
+        });
+
+        // Size
+        const sizeSlider = document.getElementById('size-slider');
+        const sizeValue = document.getElementById('size-value');
+        sizeSlider.addEventListener('input', () => {
+            lineWidth = parseInt(sizeSlider.value);
+            sizeValue.textContent = lineWidth;
+        });
+
+        // Grid
+        document.getElementById('grid-btn').addEventListener('click', () => {
+            gridEnabled = !gridEnabled;
+            grid.style.display = gridEnabled ? 'block' : 'none';
+            document.getElementById('grid-btn').style.background = gridEnabled ? '#0a84ff' : '#3a3a3a';
+        });
+
+        // Timer
+        document.getElementById('timer-btn').addEventListener('click', () => {
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                timerInterval = null;
+                timerDisplay.style.display = 'none';
+            } else {
+                seconds = 0;
+                timerDisplay.style.display = 'block';
+                timerDisplay.textContent = '00:00';
+                timerInterval = setInterval(() => {
+                    seconds++;
+                    const min = Math.floor(seconds / 60).toString().padStart(2, '0');
+                    const sec = (seconds % 60).toString().padStart(2, '0');
+                    timerDisplay.textContent = `${min}:${sec}`;
+                }, 1000);
+            }
+        });
+
+        // Print Whiteboard
+        document.getElementById('print-btn').addEventListener('click', () => {
+            const printWindow = window.open('', '_blank');
+            printWindow.document.write(`
+                <html>
+                <head>
+                    <title>Whiteboard Print</title>
+                    <style>
+                        body { margin: 0; padding: 20px; background: white; }
+                        #print-canvas { 
+                            border: 1px solid #ccc; 
+                            max-width: 100%; 
+                            height: auto;
+                            display: block;
+                            margin: 0 auto;
+                        }
+                        .print-note {
+                            position: absolute;
+                            background: #fff9b1;
+                            padding: 12px;
+                            box-shadow: 3px 3px 8px rgba(0,0,0,0.3);
+                            border: 2px solid #f0d000;
+                            font-family: 'Comic Sans MS', cursive;
+                            font-size: 16px;
+                        }
+                    </style>
+                </head>
+                <body>
+                    <h2 style="text-align:center; margin-bottom:20px;">Whiteboard</h2>
+                    <canvas id="print-canvas" width="${canvas.width}" height="${canvas.height}"></canvas>
+                </body>
+                </html>
+            `);
+
+            const printCanvas = printWindow.document.getElementById('print-canvas');
+            const printCtx = printCanvas.getContext('2d');
+
+            // Draw the main canvas content
+            printCtx.drawImage(canvas, 0, 0);
+
+            // Add sticky notes to print
+            const notes = document.querySelectorAll('.note');
+            notes.forEach(note => {
+                const rect = note.getBoundingClientRect();
+                const containerRect = document.getElementById('canvas-container').getBoundingClientRect();
+
+                const noteX = rect.left - containerRect.left;
+                const noteY = rect.top - containerRect.top;
+
+                printCtx.save();
+                printCtx.font = '16px Comic Sans MS';
+                printCtx.fillStyle = '#fff9b1';
+                printCtx.strokeStyle = '#f0d000';
+                printCtx.lineWidth = 2;
+
+                // Draw note background
+                printCtx.fillRect(noteX, noteY, rect.width, rect.height);
+                printCtx.strokeRect(noteX, noteY, rect.width, rect.height);
+
+                // Draw note text
+                const noteText = note.querySelector('div[contenteditable]').innerText;
+                printCtx.fillStyle = '#1e1e1e';
+                printCtx.textBaseline = 'top';
+                printCtx.fillText(noteText, noteX + 12, noteY + 40);
+
+                printCtx.restore();
+            });
+
+            printWindow.document.close();
+            printWindow.focus();
+
+            // Print after a short delay to ensure rendering
+            setTimeout(() => {
+                printWindow.print();
+            }, 500);
+        });
+
+        // Clear
+        document.getElementById('clear').addEventListener('click', () => {
+            if (confirm('Clear entire whiteboard?')) {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                undoStack = [];
+            }
+        });
+
+        // Undo
+        document.getElementById('undo').addEventListener('click', () => {
+            if (undoStack.length > 0) {
+                const lastState = undoStack.pop();
+                const img = new Image();
+                img.src = lastState;
+                img.onload = () => {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(img, 0, 0);
+                };
+            }
+        });
+
+        // Drawing
+        function startDrawing(e) {
+            if (currentTool === 'text') return;
+            saveState();
+            isDrawing = true;
+            const rect = canvas.getBoundingClientRect();
+            lastX = e.clientX - rect.left;
+            lastY = e.clientY - rect.top;
+        }
+
+        function draw(e) {
+            if (!isDrawing) return;
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+
+            if (currentTool === 'eraser') {
+                ctx.globalCompositeOperation = 'destination-out';
+                ctx.lineWidth = lineWidth + 10;
+            } else {
+                ctx.globalCompositeOperation = 'source-over';
+                ctx.strokeStyle = currentColor;
+                ctx.lineWidth = lineWidth;
+            }
+
+            ctx.beginPath();
+            ctx.moveTo(lastX, lastY);
+            ctx.lineTo(x, y);
+            ctx.stroke();
+
+            lastX = x;
+            lastY = y;
+        }
+
+        function stopDrawing() {
+            isDrawing = false;
+            ctx.globalCompositeOperation = 'source-over';
+        }
+
+        canvas.addEventListener('mousedown', startDrawing);
+        canvas.addEventListener('mousemove', draw);
+        canvas.addEventListener('mouseup', stopDrawing);
+        canvas.addEventListener('mouseout', stopDrawing);
+
+        // Touch support
+        canvas.addEventListener('touchstart', e => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            canvas.dispatchEvent(new MouseEvent('mousedown', { clientX: touch.clientX, clientY: touch.clientY }));
+        });
+        canvas.addEventListener('touchmove', e => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: touch.clientX, clientY: touch.clientY }));
+        });
+        canvas.addEventListener('touchend', () => {
+            canvas.dispatchEvent(new MouseEvent('mouseup', {}));
+        });
+
+        // Text tool
+        canvas.addEventListener('dblclick', (e) => {
+            if (currentTool !== 'text') return;
+
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            textInput.style.display = 'block';
+            textInput.style.left = `${e.clientX}px`;
+            textInput.style.top = `${e.clientY - 30}px`;
+            textInput.innerHTML = '';
+            textInput.focus();
+
+            const saveText = () => {
+                const text = textInput.innerText.trim();
+                if (text) {
+                    ctx.font = '24px Arial';
+                    ctx.fillStyle = currentColor;
+                    ctx.fillText(text, x, y + 30);
+                    saveState();
+                }
+                textInput.style.display = 'none';
+            };
+
+            textInput.onblur = saveText;
+            textInput.onkeydown = (ev) => {
+                if (ev.key === 'Enter' && !ev.shiftKey) {
+                    ev.preventDefault();
+                    saveText();
+                }
+            };
+        });
+
+        // Sticky Notes
+        function createStickyNote() {
+            const note = document.createElement('div');
+            note.className = 'note';
+            note.style.left = `${Math.random() * (window.innerWidth - 300) + 100}px`;
+            note.style.top = `${Math.random() * (window.innerHeight - 300) + 100}px`;
+
+            note.innerHTML = `
+                <div class="note-header">
+                    <span>Sticky Note</span>
+                    <span class="note-close">✕</span>
+                </div>
+                <div contenteditable="true" style="outline: none; min-height: 80px;"></div>
+            `;
+
+            document.getElementById('canvas-container').appendChild(note);
+
+            let isDragging = false;
+            let offsetX, offsetY;
+
+            note.addEventListener('mousedown', (e) => {
+                if (e.target.classList.contains('note-close')) return;
+                isDragging = true;
+                const rect = note.getBoundingClientRect();
+                offsetX = e.clientX - rect.left;
+                offsetY = e.clientY - rect.top;
+                note.style.zIndex = 1000;
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                if (!isDragging) return;
+                note.style.left = `${e.clientX - offsetX}px`;
+                note.style.top = `${e.clientY - offsetY}px`;
+            });
+
+            document.addEventListener('mouseup', () => isDragging = false);
+
+            note.querySelector('.note-close').addEventListener('click', () => note.remove());
+        }
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            if ((e.key === 'Delete' || e.key === 'Backspace') && document.activeElement !== textInput) {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+            if (e.key === 'z' && e.ctrlKey) {
+                if (undoStack.length > 0) {
+                    const lastState = undoStack.pop();
+                    const img = new Image();
+                    img.src = lastState;
+                    img.onload = () => {
+                        ctx.clearRect(0, 0, canvas.width, canvas.height);
+                        ctx.drawImage(img, 0, 0);
+                    };
+                }
+            }
+        });
+
+        // Initial setup
+        ctx.strokeStyle = currentColor;
+        ctx.lineWidth = lineWidth;
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+
+        document.getElementById('color-black').classList.add('active');
+
+        // Status update
+        function updateStatus() {
+            document.getElementById('status').textContent = `Ready • ${currentTool.charAt(0).toUpperCase() + currentTool.slice(1)} tool`;
+        }
+        setInterval(updateStatus, 1000);
+    </script>
+</body>
+</html>
