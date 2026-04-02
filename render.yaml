@@ -3,7 +3,7 @@ services:
     name: apphub-api
     runtime: node
     plan: starter
-    buildCommand: npm install && npm run db:migrate
+    buildCommand: npm install && npm test && npm run db:migrate
     startCommand: node index.js
     healthCheckPath: /api/health
     envVars:

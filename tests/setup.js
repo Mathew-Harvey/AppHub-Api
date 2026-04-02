@@ -1,15 +1,25 @@
-const pool = require('../config/db');
+const { Pool } = require('pg');
+require('dotenv').config();
+
+const TEST_SCHEMA = 'test_apphub';
+
+// Use the same DATABASE_URL but isolate via a Postgres schema
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' || process.env.DATABASE_SSLMODE
+    ? { rejectUnauthorized: process.env.DATABASE_SSLMODE !== 'no-verify' }
+    : false,
+  max: 5,
+});
 
 async function migrate() {
   const client = await pool.connect();
   try {
+    // Create isolated test schema (drops old one if exists)
+    await client.query(`DROP SCHEMA IF EXISTS ${TEST_SCHEMA} CASCADE`);
+    await client.query(`CREATE SCHEMA ${TEST_SCHEMA}`);
+    await client.query(`SET search_path TO ${TEST_SCHEMA}`);
     await client.query('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"');
-
-    await client.query('DROP TABLE IF EXISTS app_shares CASCADE');
-    await client.query('DROP TABLE IF EXISTS apps CASCADE');
-    await client.query('DROP TABLE IF EXISTS invitations CASCADE');
-    await client.query('DROP TABLE IF EXISTS users CASCADE');
-    await client.query('DROP TABLE IF EXISTS workspaces CASCADE');
 
     await client.query(`
       CREATE TABLE workspaces (
@@ -24,6 +34,8 @@ async function migrate() {
         plan VARCHAR(20) DEFAULT 'free',
         ai_conversions_used INTEGER DEFAULT 0,
         ai_conversions_reset_at TIMESTAMP DEFAULT NOW(),
+        stripe_customer_id VARCHAR(255),
+        stripe_subscription_id VARCHAR(255),
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
       )
@@ -75,6 +87,7 @@ async function migrate() {
         delete_requested_by UUID,
         visibility VARCHAR(20) DEFAULT 'team' CHECK (visibility IN ('private', 'team', 'specific')),
         is_active BOOLEAN DEFAULT true,
+        is_demo BOOLEAN DEFAULT false,
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
       )
@@ -89,13 +102,76 @@ async function migrate() {
         UNIQUE(app_id, user_id)
       )
     `);
+
+    await client.query(`
+      CREATE TABLE app_folders (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL DEFAULT 'New Folder',
+        icon VARCHAR(10) DEFAULT '📁',
+        sort_order INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE app_folder_items (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        folder_id UUID REFERENCES app_folders(id) ON DELETE CASCADE,
+        app_id UUID REFERENCES apps(id) ON DELETE CASCADE,
+        sort_order INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(folder_id, app_id)
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE conversion_jobs (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        status VARCHAR(20) DEFAULT 'processing' CHECK (status IN ('processing', 'done', 'failed')),
+        html TEXT,
+        error TEXT,
+        original_filename VARCHAR(255),
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE conversion_logs (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        input_files INTEGER,
+        input_tokens_est INTEGER,
+        output_tokens_est INTEGER,
+        tier_used INTEGER,
+        model_used VARCHAR(100),
+        cost_estimate_usd NUMERIC(10, 6),
+        success BOOLEAN DEFAULT true,
+        validation_errors JSONB,
+        processing_time_ms INTEGER,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
   } finally {
     client.release();
   }
 }
 
+// Set search_path for all connections in the pool so app code uses the test schema
+async function setSearchPath() {
+  await pool.query(`SET search_path TO ${TEST_SCHEMA}, public`);
+}
+
 async function teardown() {
+  try {
+    await pool.query(`DROP SCHEMA IF EXISTS ${TEST_SCHEMA} CASCADE`);
+  } catch (err) {
+    console.error('Teardown error:', err.message);
+  }
   await pool.end();
 }
 
-module.exports = { migrate, teardown, pool };
+module.exports = { migrate, teardown, pool, setSearchPath, TEST_SCHEMA };
