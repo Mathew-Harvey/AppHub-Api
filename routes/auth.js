@@ -52,7 +52,8 @@ async function getUserProfile(userId) {
   if (result.rows.length === 0) return null;
 
   const row = result.rows[0];
-  const plan = row.plan || 'free';
+  const bypassPlan = process.env.DEV_BYPASS_PLAN === 'true';
+  const plan = bypassPlan ? 'pro' : (row.plan || 'free');
   return {
     id: row.id,
     email: row.email,
@@ -68,7 +69,9 @@ async function getUserProfile(userId) {
       primaryColorLight: row.primary_color_light || '#ffffff',
       accentColorLight: row.accent_color_light || '#d63851',
       plan,
-      planLimits: getLimits(plan)
+      planLimits: bypassPlan
+        ? { plan: 'pro', planName: 'Pro', maxApps: null, maxMembers: null, aiConversions: true, aiConversionsLimit: 50, priceMonthly: 1200 }
+        : getLimits(plan)
     }
   };
 }

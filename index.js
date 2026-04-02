@@ -18,8 +18,10 @@ const convertRoutes = require('./routes/convert');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Security headers
-app.use(helmet({
+// Security headers — skip Helmet for /sandbox routes since they set their own
+// headers and Helmet's defaults (Origin-Agent-Cluster, Permissions-Policy, CSP)
+// conflict with serving user HTML inside iframes.
+const helmetMiddleware = helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
@@ -35,7 +37,11 @@ app.use(helmet({
   },
   crossOriginEmbedderPolicy: false,
   hsts: process.env.NODE_ENV === 'production' ? { maxAge: 31536000, includeSubDomains: true } : false
-}));
+});
+app.use((req, res, next) => {
+  if (req.path.startsWith('/sandbox')) return next();
+  helmetMiddleware(req, res, next);
+});
 
 // CORS — exact origin matching (no startsWith to prevent subdomain bypass)
 const allowedOrigins = new Set(

@@ -4,7 +4,8 @@ const rateLimit = require('express-rate-limit');
 const pool = require('../config/db');
 const { auth, adminOnly, validateId } = require('../middleware/auth');
 const { detectFileType, validateHtmlContent } = require('../services/fileDetection');
-const { convertToHtml, checkConversionQuota, incrementConversionCount } = require('../services/aiConvert');
+const { convertToHtml, checkConversionQuota, incrementConversionCount, fixHtmlErrors } = require('../services/aiConvert');
+const { validateHtmlErrors } = require('../services/htmlValidator');
 const { enforceAppLimit, requirePro } = require('../middleware/subscription');
 
 const router = express.Router();
@@ -307,8 +308,39 @@ router.post('/upload', auth, uploadLimiter, enforceAppLimit, upload.single('appF
       });
     }
 
-    const fileContent = req.file.buffer.toString('utf-8');
+    let fileContent = req.file.buffer.toString('utf-8');
     const validation = validateHtmlContent(fileContent, req.file.size);
+
+    // Validate for JS errors (syntax errors, TDZ issues)
+    const codeErrors = validateHtmlErrors(fileContent);
+    const blockingErrors = codeErrors.filter(e => e.type !== 'tdz_warning');
+    let autoFixed = false;
+    let fixedErrors = [];
+
+    if (blockingErrors.length > 0) {
+      const ws = await pool.query('SELECT plan FROM workspaces WHERE id = $1', [req.user.workspaceId]);
+      const plan = ws.rows[0]?.plan || 'free';
+      const bypassPlan = process.env.DEV_BYPASS_PLAN === 'true';
+
+      if (plan !== 'pro' && !bypassPlan) {
+        return res.status(422).json({
+          error: 'code_errors',
+          message: 'Your HTML file contains JavaScript errors. Upgrade to Pro to have errors automatically fixed by AI during upload.',
+          errors: codeErrors,
+          upgradeRequired: true
+        });
+      }
+
+      if (process.env.ANTHROPIC_API_KEY) {
+        try {
+          fileContent = await fixHtmlErrors(fileContent, codeErrors);
+          autoFixed = true;
+          fixedErrors = codeErrors;
+        } catch (fixErr) {
+          console.error('AI auto-fix failed, saving original:', fixErr.message);
+        }
+      }
+    }
 
     const maxOrder = await pool.query(
       'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM apps WHERE workspace_id = $1 AND is_active = true',
@@ -350,7 +382,7 @@ router.post('/upload', auth, uploadLimiter, enforceAppLimit, upload.single('appF
         [app.id]
       );
 
-      res.status(201).json({ app: formatApp(full.rows[0]), validation });
+      res.status(201).json({ app: formatApp(full.rows[0]), validation, autoFixed, fixedErrors });
     } catch (err) {
       await client.query('ROLLBACK');
       throw err;
@@ -492,7 +524,38 @@ router.put('/:id/file', auth, validateId, upload.single('appFile'), async (req, 
       return res.status(400).json({ error: 'Unsupported file type', detected: fileCheck.detected, conversionPrompt: fileCheck.conversionPrompt });
     }
 
-    const fileContent = req.file.buffer.toString('utf-8');
+    let fileContent = req.file.buffer.toString('utf-8');
+
+    const codeErrors = validateHtmlErrors(fileContent);
+    const blockingErrors = codeErrors.filter(e => e.type !== 'tdz_warning');
+    let autoFixed = false;
+    let fixedErrors = [];
+
+    if (blockingErrors.length > 0) {
+      const ws = await pool.query('SELECT plan FROM workspaces WHERE id = $1', [req.user.workspaceId]);
+      const plan = ws.rows[0]?.plan || 'free';
+      const bypassPlan = process.env.DEV_BYPASS_PLAN === 'true';
+
+      if (plan !== 'pro' && !bypassPlan) {
+        return res.status(422).json({
+          error: 'code_errors',
+          message: 'Your HTML file contains JavaScript errors. Upgrade to Pro to have errors automatically fixed by AI during upload.',
+          errors: codeErrors,
+          upgradeRequired: true
+        });
+      }
+
+      if (process.env.ANTHROPIC_API_KEY) {
+        try {
+          fileContent = await fixHtmlErrors(fileContent, codeErrors);
+          autoFixed = true;
+          fixedErrors = codeErrors;
+        } catch (fixErr) {
+          console.error('AI auto-fix failed, saving original:', fixErr.message);
+        }
+      }
+    }
+
     await pool.query(
       'UPDATE apps SET file_content = $1, original_filename = $2, file_size = $3, updated_at = NOW() WHERE id = $4',
       [fileContent, req.file.originalname, req.file.size, req.params.id]
@@ -502,7 +565,7 @@ router.put('/:id/file', auth, validateId, upload.single('appFile'), async (req, 
       'SELECT a.*, u.display_name AS uploaded_by_name, u.email AS uploaded_by_email FROM apps a LEFT JOIN users u ON a.uploaded_by = u.id WHERE a.id = $1',
       [req.params.id]
     );
-    res.json({ app: formatApp(full.rows[0]) });
+    res.json({ app: formatApp(full.rows[0]), autoFixed, fixedErrors });
   } catch (err) {
     console.error('Update file error:', err);
     res.status(500).json({ error: 'Failed to update app file' });

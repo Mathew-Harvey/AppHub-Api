@@ -13,6 +13,8 @@ function getStripe() {
 // GET /api/subscription/status — current plan, usage, and limits
 router.get('/status', auth, async (req, res) => {
   try {
+    const bypassPlan = process.env.DEV_BYPASS_PLAN === 'true';
+
     const ws = await pool.query(
       `SELECT plan, stripe_customer_id, stripe_subscription_id,
               ai_conversions_used, ai_conversions_reset_at
@@ -22,7 +24,7 @@ router.get('/status', auth, async (req, res) => {
     if (ws.rows.length === 0) return res.status(404).json({ error: 'Workspace not found' });
 
     const row = ws.rows[0];
-    const limits = getLimits(row.plan);
+    const limits = bypassPlan ? getLimits('pro') : getLimits(row.plan);
 
     const [appCount, memberCount] = await Promise.all([
       pool.query('SELECT COUNT(*) AS total FROM apps WHERE workspace_id = $1 AND is_active = true', [req.user.workspaceId]),
@@ -37,7 +39,7 @@ router.get('/status', auth, async (req, res) => {
         aiConversions: row.ai_conversions_used || 0,
         aiConversionsResetAt: row.ai_conversions_reset_at
       },
-      hasStripeSubscription: !!row.stripe_subscription_id
+      hasStripeSubscription: bypassPlan ? true : !!row.stripe_subscription_id
     });
   } catch (err) {
     console.error('Subscription status error:', err);

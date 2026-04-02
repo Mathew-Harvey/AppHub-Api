@@ -50,17 +50,25 @@ router.get('/:appId', validateId, async (req, res) => {
       }
     }
 
+    const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
-    const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
-    res.setHeader('Content-Security-Policy', `default-src 'self' 'unsafe-inline' 'unsafe-eval' https: data: blob:; frame-ancestors ${clientUrl}`);
+    res.setHeader('Content-Security-Policy',
+      `default-src 'self' 'unsafe-inline' 'unsafe-eval' https: data: blob:; ` +
+      `media-src 'self' https: data: blob:; ` +
+      `frame-ancestors ${clientUrl}`
+    );
     res.setHeader('X-Frame-Options', `ALLOW-FROM ${clientUrl}`);
+    res.removeHeader('Origin-Agent-Cluster');
+    res.setHeader('Permissions-Policy', 'clipboard-write=*, clipboard-read=*');
+    res.setHeader('Cross-Origin-Opener-Policy', 'unsafe-none');
 
     res.send(app.file_content);
   } catch (err) {
-    console.error('Sandbox error:', err);
-    res.status(500).send('<html><body><h2>Error loading app</h2></body></html>');
+    console.error('Sandbox error:', { appId: req.params.appId, message: err.message, stack: err.stack });
+    res.status(500).send('<html><body><h2>Error loading app</h2><p>An internal error occurred. Check server logs for details.</p></body></html>');
   }
 });
 

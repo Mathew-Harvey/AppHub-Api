@@ -1,8 +1,13 @@
 const pool = require('../config/db');
 const { getPlan } = require('../config/plans');
 
-// Rejects the request if the workspace has hit its app limit for its current plan
+function isBypassEnabled() {
+  return process.env.DEV_BYPASS_PLAN === 'true';
+}
+
 function enforceAppLimit(req, res, next) {
+  if (isBypassEnabled()) return next();
+
   (async () => {
     try {
       const ws = await pool.query('SELECT plan FROM workspaces WHERE id = $1', [req.user.workspaceId]);
@@ -34,8 +39,9 @@ function enforceAppLimit(req, res, next) {
   })();
 }
 
-// Rejects the request if the workspace has hit its member limit for its current plan
 function enforceMemberLimit(req, res, next) {
+  if (isBypassEnabled()) return next();
+
   (async () => {
     try {
       const ws = await pool.query('SELECT plan FROM workspaces WHERE id = $1', [req.user.workspaceId]);
@@ -67,8 +73,9 @@ function enforceMemberLimit(req, res, next) {
   })();
 }
 
-// Rejects the request if the workspace plan does not include AI conversions
 function requirePro(req, res, next) {
+  if (isBypassEnabled()) return next();
+
   (async () => {
     try {
       const ws = await pool.query('SELECT plan FROM workspaces WHERE id = $1', [req.user.workspaceId]);

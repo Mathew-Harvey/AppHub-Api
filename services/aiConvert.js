@@ -1,5 +1,6 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const AdmZip = require('adm-zip');
+const cheerio = require('cheerio');
 const path = require('path');
 
 const AI_CONVERSIONS_LIMIT = 50; // per month per workspace
@@ -129,4 +130,71 @@ async function incrementConversionCount(pool, workspaceId) {
   );
 }
 
-module.exports = { convertToHtml, checkConversionQuota, incrementConversionCount };
+/**
+ * Fix identified JS errors in an HTML file using AI.
+ * Extracts only the broken script blocks, fixes them, and splices back
+ * into the original HTML to avoid modifying anything else.
+ */
+async function fixHtmlErrors(htmlContent, errors) {
+  const $ = cheerio.load(htmlContent, { xmlMode: false });
+
+  const errorsByBlock = new Map();
+  for (const err of errors) {
+    if (!err.scriptBlock) continue;
+    if (!errorsByBlock.has(err.scriptBlock)) errorsByBlock.set(err.scriptBlock, []);
+    errorsByBlock.get(err.scriptBlock).push(err);
+  }
+
+  const scriptElements = [];
+  let idx = 0;
+  $('script').each((_, el) => {
+    const $el = $(el);
+    if ($el.attr('src')) return;
+    if (!$el.text().trim()) return;
+    idx++;
+    scriptElements.push({ index: idx, element: $el, code: $el.text() });
+  });
+
+  let fixedHtml = htmlContent;
+
+  for (const [blockNum, blockErrors] of errorsByBlock) {
+    const script = scriptElements.find(s => s.index === blockNum);
+    if (!script) continue;
+
+    const errorList = blockErrors
+      .map(e => `- Line ${e.line || '?'}: ${e.message}`)
+      .join('\n');
+
+    const message = await client.messages.create({
+      model: process.env.AI_CONVERT_MODEL || 'claude-sonnet-4-20250514',
+      max_tokens: 64000,
+      messages: [{
+        role: 'user',
+        content: `Fix ONLY the listed errors in this JavaScript code. Keep everything else exactly the same — same variable names, same structure, same comments. Return ONLY the corrected JavaScript code with no explanation, no markdown fences, no HTML tags.
+
+Errors to fix:
+${errorList}
+
+JavaScript code:
+${script.code}`
+      }]
+    });
+
+    if (!message.content?.[0]?.text) continue;
+
+    let fixedCode = message.content[0].text.trim();
+    if (fixedCode.startsWith('```')) {
+      fixedCode = fixedCode.replace(/^```(?:javascript|js)?\n?/, '').replace(/\n?```$/, '').trim();
+    }
+
+    const original = script.code;
+    const pos = fixedHtml.indexOf(original);
+    if (pos !== -1) {
+      fixedHtml = fixedHtml.substring(0, pos) + fixedCode + fixedHtml.substring(pos + original.length);
+    }
+  }
+
+  return fixedHtml;
+}
+
+module.exports = { convertToHtml, checkConversionQuota, incrementConversionCount, fixHtmlErrors };
