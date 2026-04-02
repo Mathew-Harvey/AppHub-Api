@@ -4,7 +4,7 @@ const resend = process.env.RESEND_API_KEY
   ? new Resend(process.env.RESEND_API_KEY)
   : null;
 
-const FROM = process.env.EMAIL_FROM || 'AppHub <onboarding@resend.dev>';
+const FROM = process.env.EMAIL_FROM || 'AppHub <noreply@my-app-hub.com>';
 const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
 
 async function send({ to, subject, html }) {
