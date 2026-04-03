@@ -23,11 +23,12 @@ const logoUpload = multer({
 
 function formatWorkspace(ws) {
   const limits = getLimits(ws.plan || 'free');
+  const logoVersion = ws.updated_at ? new Date(ws.updated_at).getTime() : '';
   return {
     id: ws.id,
     name: ws.name,
     slug: ws.slug,
-    logoUrl: ws.logo_data ? '/api/workspace/logo' : null,
+    logoUrl: ws.logo_data ? `/api/workspace/logo?v=${logoVersion}` : null,
     primaryColor: ws.primary_color,
     accentColor: ws.accent_color,
     primaryColorLight: ws.primary_color_light || '#ffffff',
@@ -106,7 +107,7 @@ router.get('/logo/:id', validateId, async (req, res) => {
     const buffer = Buffer.from(matches[2], 'base64');
 
     res.setHeader('Content-Type', contentType);
-    res.setHeader('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
     res.send(buffer);
   } catch (err) {
     console.error('Get logo error:', err);
@@ -135,7 +136,7 @@ router.get('/logo', auth, async (req, res) => {
     const buffer = Buffer.from(matches[2], 'base64');
 
     res.setHeader('Content-Type', contentType);
-    res.setHeader('Cache-Control', 'public, max-age=3600, stale-while-revalidate=86400');
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
     res.send(buffer);
   } catch (err) {
     console.error('Get logo error:', err);

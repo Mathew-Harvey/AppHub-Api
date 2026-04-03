@@ -3,9 +3,11 @@ require('dotenv').config();
 
 const isTest = process.env.NODE_ENV === 'test';
 
+const useSsl = process.env.NODE_ENV === 'production' || process.env.DATABASE_SSLMODE;
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production'
+  ssl: useSsl
     ? { rejectUnauthorized: process.env.DATABASE_SSLMODE !== 'no-verify' }
     : false,
   max: isTest ? 5 : 20,
