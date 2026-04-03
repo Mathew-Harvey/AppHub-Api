@@ -8,6 +8,7 @@ const { convertToHtml, checkConversionQuota, incrementConversionCount, fixHtmlEr
 const { validateHtmlErrors } = require('../services/htmlValidator');
 const { enforceAppLimit, requirePaidAI } = require('../middleware/subscription');
 const { getPlan } = require('../config/plans');
+const { DEMO_APPS } = require('../config/demoApps');
 
 const router = express.Router();
 
@@ -587,6 +588,57 @@ router.post('/dismiss-demos', auth, async (req, res) => {
   } catch (err) {
     console.error('Dismiss demos error:', err);
     res.status(500).json({ error: 'Failed to dismiss demo apps' });
+  }
+});
+
+// POST /api/apps/restore-demos — re-seed demo apps (idempotent)
+router.post('/restore-demos', auth, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Reactivate any previously dismissed demos
+    await client.query(
+      'UPDATE apps SET is_active = true, updated_at = NOW() WHERE workspace_id = $1 AND is_demo = true AND is_active = false',
+      [req.user.workspaceId]
+    );
+
+    // Seed any demos that don't exist at all yet (new demos added after workspace was created)
+    const existing = await client.query(
+      'SELECT original_filename FROM apps WHERE workspace_id = $1 AND is_demo = true',
+      [req.user.workspaceId]
+    );
+    const existingFiles = new Set(existing.rows.map(r => r.original_filename));
+
+    const maxOrder = await client.query(
+      'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM apps WHERE workspace_id = $1 AND is_active = true',
+      [req.user.workspaceId]
+    );
+    let sortOrder = maxOrder.rows[0].next_order;
+
+    for (const app of DEMO_APPS) {
+      if (existingFiles.has(app.original_filename)) continue;
+      const content = app.file_content;
+      await client.query(
+        `INSERT INTO apps (workspace_id, uploaded_by, name, description, icon,
+          file_content, original_filename, file_size, sort_order, visibility, is_demo, demo_category)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'team', true, $10)`,
+        [
+          req.user.workspaceId, req.user.id, app.name, app.description, app.icon,
+          content, app.original_filename, Buffer.byteLength(content, 'utf-8'), sortOrder++,
+          app.demoCategory || null
+        ]
+      );
+    }
+
+    await client.query('COMMIT');
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Restore demos error:', err);
+    res.status(500).json({ error: 'Failed to restore demo apps' });
+  } finally {
+    client.release();
   }
 });
 

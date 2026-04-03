@@ -217,29 +217,21 @@ render();
     get file_content() { return loadHtml('exampleAppsGames', 'fogger.html'); }
   },
 
-  // ── Demo Tools (demoCategory: 'Demo Tools') ─────────────────────────
+  // ── Demo Apps — Tools (demoCategory: 'Demo Apps') ──────────────────
   {
     name: 'Pomodoro Timer',
     description: 'Productivity timer with focus/break cycles, stats, and task list',
     icon: '🍅',
     original_filename: 'pomodoro.html',
-    demoCategory: 'Demo Tools',
+    demoCategory: 'Demo Apps',
     get file_content() { return loadHtml('exampleAppsGeneral', 'pomodoro.html'); }
-  },
-  {
-    name: 'Calculator',
-    description: 'Scientific calculator with history, memory, and keyboard support',
-    icon: '🧮',
-    original_filename: 'calculator.html',
-    demoCategory: 'Demo Tools',
-    get file_content() { return loadHtml('exampleAppsGeneral', 'calculator.html'); }
   },
   {
     name: 'Notes',
     description: 'Sticky notes app with colors, tags, markdown, and drag-and-drop',
     icon: '📝',
     original_filename: 'notes.html',
-    demoCategory: 'Demo Tools',
+    demoCategory: 'Demo Apps',
     get file_content() { return loadHtml('exampleAppsGeneral', 'notes.html'); }
   },
   {
@@ -247,7 +239,7 @@ render();
     description: 'Convert between 10 unit categories with favorites and reference tables',
     icon: '📐',
     original_filename: 'converter.html',
-    demoCategory: 'Demo Tools',
+    demoCategory: 'Demo Apps',
     get file_content() { return loadHtml('exampleAppsGeneral', 'converter.html'); }
   },
   {
@@ -255,7 +247,7 @@ render();
     description: 'Collaborative whiteboard with drawing tools',
     icon: '🎨',
     original_filename: 'whiteboard.html',
-    demoCategory: 'Demo Tools',
+    demoCategory: 'Demo Apps',
     get file_content() { return loadHtml('exampleAppsGeneral', 'whiteboard.html'); }
   }
 ];

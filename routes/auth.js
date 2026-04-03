@@ -42,6 +42,7 @@ async function getUserProfile(userId) {
             w.name AS workspace_name, w.slug AS workspace_slug,
             w.primary_color, w.accent_color,
             w.primary_color_light, w.accent_color_light, w.plan,
+            w.updated_at AS workspace_updated_at,
             CASE WHEN w.logo_data IS NOT NULL THEN true ELSE false END AS has_logo
      FROM users u
      JOIN workspaces w ON u.workspace_id = w.id
@@ -54,6 +55,7 @@ async function getUserProfile(userId) {
   const row = result.rows[0];
   const bypassPlan = process.env.DEV_BYPASS_PLAN === 'true';
   const plan = bypassPlan ? 'power' : (row.plan || 'free');
+  const logoVersion = row.workspace_updated_at ? new Date(row.workspace_updated_at).getTime() : '';
   return {
     id: row.id,
     email: row.email,
@@ -63,7 +65,7 @@ async function getUserProfile(userId) {
     workspace: {
       name: row.workspace_name,
       slug: row.workspace_slug,
-      logoUrl: row.has_logo ? `/api/workspace/logo` : null,
+      logoUrl: row.has_logo ? `/api/workspace/logo?v=${logoVersion}` : null,
       primaryColor: row.primary_color,
       accentColor: row.accent_color,
       primaryColorLight: row.primary_color_light || '#ffffff',
