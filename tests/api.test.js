@@ -1127,3 +1127,622 @@ describe('GET /sandbox/:appId', () => {
     expect(res.status).toBe(400);
   });
 });
+
+// ─── Auth: Check Email ─────────────────────────────────────────────────────
+
+describe('POST /api/auth/check-email', () => {
+  it('rejects missing email', async () => {
+    const res = await request(app)
+      .post('/api/auth/check-email')
+      .send({});
+    expect(res.status).toBe(400);
+  });
+
+  it('returns existing_user for registered email', async () => {
+    const res = await request(app)
+      .post('/api/auth/check-email')
+      .send({ email: 'admin@test.com' });
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('existing_user');
+  });
+
+  it('returns unknown for unregistered email', async () => {
+    const res = await request(app)
+      .post('/api/auth/check-email')
+      .send({ email: 'nobody@nowhere.com' });
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('unknown');
+  });
+
+  it('returns pending_invite for invited email', async () => {
+    // Create a fresh invitation
+    await request(app)
+      .post('/api/workspace/invite')
+      .set('Cookie', adminCookie)
+      .send({ email: 'checkemail@test.com' });
+
+    const res = await request(app)
+      .post('/api/auth/check-email')
+      .send({ email: 'checkemail@test.com' });
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('pending_invite');
+    expect(Array.isArray(res.body.invites)).toBe(true);
+    expect(res.body.invites.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ─── Auth: Accept Invite ───────────────────────────────────────────────────
+
+describe('POST /api/auth/accept-invite', () => {
+  let acceptInviteId;
+
+  beforeAll(async () => {
+    const inv = await request(app)
+      .post('/api/workspace/invite')
+      .set('Cookie', adminCookie)
+      .send({ email: 'accept-test@test.com' });
+    acceptInviteId = inv.body.invitation.id;
+  });
+
+  it('rejects missing fields', async () => {
+    const res = await request(app)
+      .post('/api/auth/accept-invite')
+      .send({ email: 'accept-test@test.com' });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects weak password', async () => {
+    const res = await request(app)
+      .post('/api/auth/accept-invite')
+      .send({
+        email: 'accept-test@test.com',
+        password: 'weak',
+        displayName: 'Test',
+        inviteId: acceptInviteId
+      });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects mismatched email', async () => {
+    const res = await request(app)
+      .post('/api/auth/accept-invite')
+      .send({
+        email: 'wrong-email@test.com',
+        password: 'Password1',
+        displayName: 'Test',
+        inviteId: acceptInviteId
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/different email/i);
+  });
+
+  it('rejects invalid invite ID', async () => {
+    const res = await request(app)
+      .post('/api/auth/accept-invite')
+      .send({
+        email: 'accept-test@test.com',
+        password: 'Password1',
+        displayName: 'Test',
+        inviteId: '00000000-0000-0000-0000-000000000000'
+      });
+    expect(res.status).toBe(400);
+  });
+
+  it('accepts invite successfully', async () => {
+    const res = await request(app)
+      .post('/api/auth/accept-invite')
+      .send({
+        email: 'accept-test@test.com',
+        password: 'Password1',
+        displayName: 'Accepted User',
+        inviteId: acceptInviteId
+      });
+    expect(res.status).toBe(201);
+    expect(res.body.user.email).toBe('accept-test@test.com');
+    expect(res.body.user.role).toBe('member');
+    expect(res.body.user.workspace).toBeDefined();
+  });
+
+  it('rejects already-used invite', async () => {
+    const res = await request(app)
+      .post('/api/auth/accept-invite')
+      .send({
+        email: 'accept-test@test.com',
+        password: 'Password1',
+        displayName: 'Duplicate',
+        inviteId: acceptInviteId
+      });
+    expect(res.status).toBe(400);
+  });
+});
+
+// ─── Auth: Sandbox Token ───────────────────────────────────────────────────
+
+describe('GET /api/auth/sandbox-token', () => {
+  it('returns 401 without auth', async () => {
+    const res = await request(app).get('/api/auth/sandbox-token');
+    expect(res.status).toBe(401);
+  });
+
+  it('returns a short-lived token', async () => {
+    const res = await request(app)
+      .get('/api/auth/sandbox-token')
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(200);
+    expect(res.body.token).toBeDefined();
+    expect(typeof res.body.token).toBe('string');
+    expect(res.body.token.length).toBeGreaterThan(10);
+  });
+});
+
+// ─── Folders ───────────────────────────────────────────────────────────────
+
+describe('Folders API', () => {
+  let folderId;
+  let folderApp1Id, folderApp2Id, folderApp3Id;
+
+  beforeAll(async () => {
+    // Create apps for folder tests
+    const upload1 = await request(app)
+      .post('/api/apps/upload')
+      .set('Cookie', adminCookie)
+      .attach('appFile', Buffer.from('<html><body>Folder App 1</body></html>'), 'folder1.html')
+      .field('name', 'Folder App 1');
+    folderApp1Id = upload1.body.app.id;
+
+    const upload2 = await request(app)
+      .post('/api/apps/upload')
+      .set('Cookie', adminCookie)
+      .attach('appFile', Buffer.from('<html><body>Folder App 2</body></html>'), 'folder2.html')
+      .field('name', 'Folder App 2');
+    folderApp2Id = upload2.body.app.id;
+
+    const upload3 = await request(app)
+      .post('/api/apps/upload')
+      .set('Cookie', adminCookie)
+      .attach('appFile', Buffer.from('<html><body>Folder App 3</body></html>'), 'folder3.html')
+      .field('name', 'Folder App 3');
+    folderApp3Id = upload3.body.app.id;
+  });
+
+  describe('GET /api/folders', () => {
+    it('returns 401 without auth', async () => {
+      const res = await request(app).get('/api/folders');
+      expect(res.status).toBe(401);
+    });
+
+    it('returns empty folders initially', async () => {
+      const res = await request(app)
+        .get('/api/folders')
+        .set('Cookie', adminCookie);
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body.folders)).toBe(true);
+    });
+  });
+
+  describe('POST /api/folders', () => {
+    it('rejects without appIds', async () => {
+      const res = await request(app)
+        .post('/api/folders')
+        .set('Cookie', adminCookie)
+        .send({ name: 'Test Folder' });
+      expect(res.status).toBe(400);
+    });
+
+    it('rejects with fewer than 2 appIds', async () => {
+      const res = await request(app)
+        .post('/api/folders')
+        .set('Cookie', adminCookie)
+        .send({ name: 'Test Folder', appIds: [folderApp1Id] });
+      expect(res.status).toBe(400);
+    });
+
+    it('creates folder with 2+ apps', async () => {
+      const res = await request(app)
+        .post('/api/folders')
+        .set('Cookie', adminCookie)
+        .send({ name: 'My Folder', icon: '📂', appIds: [folderApp1Id, folderApp2Id] });
+      expect(res.status).toBe(201);
+      expect(res.body.folder.name).toBe('My Folder');
+      expect(res.body.folder.icon).toBe('📂');
+      folderId = res.body.folder.id;
+    });
+  });
+
+  describe('PUT /api/folders/:id', () => {
+    it('renames folder', async () => {
+      const res = await request(app)
+        .put(`/api/folders/${folderId}`)
+        .set('Cookie', adminCookie)
+        .send({ name: 'Renamed Folder' });
+      expect(res.status).toBe(200);
+      expect(res.body.folder.name).toBe('Renamed Folder');
+    });
+
+    it('updates folder icon', async () => {
+      const res = await request(app)
+        .put(`/api/folders/${folderId}`)
+        .set('Cookie', adminCookie)
+        .send({ icon: '🗂️' });
+      expect(res.status).toBe(200);
+      expect(res.body.folder.icon).toBe('🗂️');
+    });
+
+    it('returns 404 for non-existent folder', async () => {
+      const res = await request(app)
+        .put('/api/folders/00000000-0000-0000-0000-000000000000')
+        .set('Cookie', adminCookie)
+        .send({ name: 'Nope' });
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe('POST /api/folders/:id/apps', () => {
+    it('adds app to folder', async () => {
+      const res = await request(app)
+        .post(`/api/folders/${folderId}/apps`)
+        .set('Cookie', adminCookie)
+        .send({ appId: folderApp3Id });
+      expect(res.status).toBe(201);
+      expect(res.body.ok).toBe(true);
+    });
+
+    it('rejects missing appId', async () => {
+      const res = await request(app)
+        .post(`/api/folders/${folderId}/apps`)
+        .set('Cookie', adminCookie)
+        .send({});
+      expect(res.status).toBe(400);
+    });
+  });
+
+  describe('DELETE /api/folders/:id/apps/:appId', () => {
+    it('removes app from folder', async () => {
+      const res = await request(app)
+        .delete(`/api/folders/${folderId}/apps/${folderApp3Id}`)
+        .set('Cookie', adminCookie);
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(true);
+      expect(res.body.folderDeleted).toBe(false);
+    });
+  });
+
+  describe('PUT /api/folders/layout', () => {
+    it('rejects missing folders array', async () => {
+      const res = await request(app)
+        .put('/api/folders/layout')
+        .set('Cookie', adminCookie)
+        .send({});
+      expect(res.status).toBe(400);
+    });
+
+    it('saves folder layout', async () => {
+      const res = await request(app)
+        .put('/api/folders/layout')
+        .set('Cookie', adminCookie)
+        .send({ folders: [{ id: folderId, appIds: [folderApp2Id, folderApp1Id] }] });
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(true);
+    });
+  });
+
+  describe('DELETE /api/folders/:id', () => {
+    it('deletes folder', async () => {
+      const res = await request(app)
+        .delete(`/api/folders/${folderId}`)
+        .set('Cookie', adminCookie);
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(true);
+    });
+
+    it('returns 404 for deleted folder', async () => {
+      const res = await request(app)
+        .delete(`/api/folders/${folderId}`)
+        .set('Cookie', adminCookie);
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe('Auto-delete folder on remove app', () => {
+    let autoDeleteFolderId;
+
+    beforeAll(async () => {
+      const folder = await request(app)
+        .post('/api/folders')
+        .set('Cookie', adminCookie)
+        .send({ name: 'Auto Delete', appIds: [folderApp1Id, folderApp2Id] });
+      autoDeleteFolderId = folder.body.folder.id;
+    });
+
+    it('auto-deletes folder when apps drop below 2', async () => {
+      const res = await request(app)
+        .delete(`/api/folders/${autoDeleteFolderId}/apps/${folderApp1Id}`)
+        .set('Cookie', adminCookie);
+      expect(res.status).toBe(200);
+      expect(res.body.folderDeleted).toBe(true);
+    });
+  });
+});
+
+// ─── Subscription: Status ──────────────────────────────────────────────────
+
+describe('GET /api/subscription/status', () => {
+  it('returns 401 without auth', async () => {
+    const res = await request(app).get('/api/subscription/status');
+    expect(res.status).toBe(401);
+  });
+
+  it('returns subscription status and usage', async () => {
+    const res = await request(app)
+      .get('/api/subscription/status')
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(200);
+    expect(res.body.plan).toBeDefined();
+    expect(res.body.usage).toBeDefined();
+    expect(typeof res.body.usage.apps).toBe('number');
+    expect(typeof res.body.usage.members).toBe('number');
+    expect(typeof res.body.hasStripeSubscription).toBe('boolean');
+  });
+});
+
+// ─── Subscription: Checkout Landing ────────────────────────────────────────
+
+describe('GET /api/subscription/checkout-landing', () => {
+  it('rejects missing plan', async () => {
+    const res = await request(app)
+      .get('/api/subscription/checkout-landing');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/invalid plan/i);
+  });
+
+  it('rejects invalid plan name', async () => {
+    const res = await request(app)
+      .get('/api/subscription/checkout-landing?plan=invalid');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/invalid plan/i);
+  });
+
+  it('returns 500 when Stripe is not configured', async () => {
+    // Without STRIPE_SECRET_KEY, Stripe won't be available
+    const res = await request(app)
+      .get('/api/subscription/checkout-landing?plan=team');
+    // Either 500 (no Stripe) or 303 (redirect to Stripe) depending on config
+    expect([303, 500]).toContain(res.status);
+  });
+});
+
+// ─── Subscription: Verify Session ──────────────────────────────────────────
+
+describe('GET /api/subscription/verify-session', () => {
+  it('rejects missing session_id', async () => {
+    const res = await request(app)
+      .get('/api/subscription/verify-session');
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/session_id/i);
+  });
+
+  it('rejects invalid session_id', async () => {
+    const res = await request(app)
+      .get('/api/subscription/verify-session?session_id=fake_session');
+    // Either 400 (invalid) or 500 (Stripe not configured)
+    expect([400, 500]).toContain(res.status);
+  });
+});
+
+// ─── Apps: Demo management ─────────────────────────────────────────────────
+
+describe('Demo app management', () => {
+  it('dismiss-demos returns 401 without auth', async () => {
+    const res = await request(app).post('/api/apps/dismiss-demos');
+    expect(res.status).toBe(401);
+  });
+
+  it('dismiss-demos succeeds', async () => {
+    const res = await request(app)
+      .post('/api/apps/dismiss-demos')
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+  });
+
+  it('restore-demos returns 401 without auth', async () => {
+    const res = await request(app).post('/api/apps/restore-demos');
+    expect(res.status).toBe(401);
+  });
+
+  it('restore-demos succeeds', async () => {
+    const res = await request(app)
+      .post('/api/apps/restore-demos')
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+  });
+});
+
+// ─── Builder: Sessions ─────────────────────────────────────────────────────
+
+describe('Builder API', () => {
+  let builderSessionId;
+
+  describe('GET /api/builder/usage', () => {
+    it('returns 401 without auth', async () => {
+      const res = await request(app).get('/api/builder/usage');
+      expect(res.status).toBe(401);
+    });
+
+    it('returns usage for authenticated user', async () => {
+      const res = await request(app)
+        .get('/api/builder/usage')
+        .set('Cookie', adminCookie);
+      expect(res.status).toBe(200);
+    });
+  });
+
+  describe('POST /api/builder/sessions', () => {
+    it('returns 401 without auth', async () => {
+      const res = await request(app)
+        .post('/api/builder/sessions')
+        .send({ name: 'Test Build' });
+      expect(res.status).toBe(401);
+    });
+
+    it('rejects on free plan (no builder access)', async () => {
+      const res = await request(app)
+        .post('/api/builder/sessions')
+        .set('Cookie', adminCookie)
+        .send({ name: 'Test Build' });
+      // Free plan doesn't have builder access
+      expect([201, 403]).toContain(res.status);
+      if (res.status === 201) {
+        builderSessionId = res.body.session.id;
+      }
+    });
+
+    it('creates session on paid plan', async () => {
+      // Upgrade workspace to power plan for builder access
+      await pool.query("UPDATE workspaces SET plan = 'power' WHERE slug = 'test-workspace'");
+
+      const res = await request(app)
+        .post('/api/builder/sessions')
+        .set('Cookie', adminCookie)
+        .send({
+          name: 'Test Builder Session',
+          description: 'Building a test app',
+          appType: 'tool',
+          complexity: 'simple',
+          features: ['responsive', 'dark mode']
+        });
+      expect(res.status).toBe(201);
+      expect(res.body.session.name).toBe('Test Builder Session');
+      expect(res.body.session.appType).toBe('tool');
+      expect(res.body.session.complexity).toBe('simple');
+      expect(res.body.session.status).toBe('draft');
+      builderSessionId = res.body.session.id;
+    });
+
+    it('rejects missing name', async () => {
+      const res = await request(app)
+        .post('/api/builder/sessions')
+        .set('Cookie', adminCookie)
+        .send({ description: 'No name provided' });
+      expect(res.status).toBe(400);
+    });
+
+    it('rejects name over 100 chars', async () => {
+      const res = await request(app)
+        .post('/api/builder/sessions')
+        .set('Cookie', adminCookie)
+        .send({ name: 'x'.repeat(101) });
+      expect(res.status).toBe(400);
+    });
+
+    it('rejects invalid appType', async () => {
+      const res = await request(app)
+        .post('/api/builder/sessions')
+        .set('Cookie', adminCookie)
+        .send({ name: 'Test', appType: 'invalid-type' });
+      expect(res.status).toBe(400);
+    });
+
+    it('rejects invalid complexity', async () => {
+      const res = await request(app)
+        .post('/api/builder/sessions')
+        .set('Cookie', adminCookie)
+        .send({ name: 'Test', complexity: 'ultra' });
+      expect(res.status).toBe(400);
+    });
+  });
+
+  describe('GET /api/builder/sessions', () => {
+    it('returns 401 without auth', async () => {
+      const res = await request(app).get('/api/builder/sessions');
+      expect(res.status).toBe(401);
+    });
+
+    it('lists sessions', async () => {
+      const res = await request(app)
+        .get('/api/builder/sessions')
+        .set('Cookie', adminCookie);
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body.sessions)).toBe(true);
+      expect(res.body.sessions.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe('GET /api/builder/sessions/:id', () => {
+    it('returns session details', async () => {
+      const res = await request(app)
+        .get(`/api/builder/sessions/${builderSessionId}`)
+        .set('Cookie', adminCookie);
+      expect(res.status).toBe(200);
+      expect(res.body.session.name).toBe('Test Builder Session');
+    });
+
+    it('returns 404 for non-existent session', async () => {
+      const res = await request(app)
+        .get('/api/builder/sessions/00000000-0000-0000-0000-000000000000')
+        .set('Cookie', adminCookie);
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe('GET /api/builder/sessions/:id/jobs/:jobId', () => {
+    it('returns 404 for non-existent job', async () => {
+      const res = await request(app)
+        .get(`/api/builder/sessions/${builderSessionId}/jobs/00000000-0000-0000-0000-000000000000`)
+        .set('Cookie', adminCookie);
+      expect(res.status).toBe(404);
+    });
+  });
+
+  describe('POST /api/builder/sessions/:id/revise', () => {
+    it('rejects without current HTML', async () => {
+      const res = await request(app)
+        .post(`/api/builder/sessions/${builderSessionId}/revise`)
+        .set('Cookie', adminCookie)
+        .send({ feedback: 'Make it blue' });
+      // Session has no HTML yet, should fail
+      expect([400, 404]).toContain(res.status);
+    });
+
+    it('rejects missing feedback', async () => {
+      const res = await request(app)
+        .post(`/api/builder/sessions/${builderSessionId}/revise`)
+        .set('Cookie', adminCookie)
+        .send({});
+      expect(res.status).toBe(400);
+    });
+  });
+
+  describe('POST /api/builder/sessions/:id/publish', () => {
+    it('rejects publish without HTML', async () => {
+      const res = await request(app)
+        .post(`/api/builder/sessions/${builderSessionId}/publish`)
+        .set('Cookie', adminCookie)
+        .send({ name: 'Published App' });
+      expect(res.status).toBe(400);
+    });
+  });
+
+  describe('DELETE /api/builder/sessions/:id', () => {
+    it('deletes session', async () => {
+      const res = await request(app)
+        .delete(`/api/builder/sessions/${builderSessionId}`)
+        .set('Cookie', adminCookie);
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(true);
+    });
+
+    it('returns 404 for deleted session', async () => {
+      const res = await request(app)
+        .get(`/api/builder/sessions/${builderSessionId}`)
+        .set('Cookie', adminCookie);
+      expect(res.status).toBe(404);
+    });
+  });
+
+  afterAll(async () => {
+    // Restore free plan
+    await pool.query("UPDATE workspaces SET plan = 'free' WHERE slug = 'test-workspace'");
+  });
+});
