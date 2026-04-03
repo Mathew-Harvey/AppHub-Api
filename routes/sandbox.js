@@ -57,7 +57,8 @@ router.get('/:appId', validateId, async (req, res) => {
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Content-Security-Policy',
       `default-src 'self' 'unsafe-inline' 'unsafe-eval' https: data: blob:; ` +
-      `media-src 'self' https: data: blob:; ` +
+      `connect-src 'self' https: wss: ws: data: blob:; ` +
+      `media-src 'self' https: data: blob: mediastream:; ` +
       `frame-ancestors ${clientUrl}`
     );
     res.setHeader('X-Frame-Options', `ALLOW-FROM ${clientUrl}`);
