@@ -76,6 +76,65 @@ router.get('/status', auth, async (req, res) => {
   }
 });
 
+// GET /api/subscription/checkout-landing?plan=team|business|power
+// Public endpoint for landing page — creates Stripe Checkout before registration
+router.get('/checkout-landing', async (req, res) => {
+  const stripe = getStripe();
+  if (!stripe) return res.status(500).json({ error: 'Billing is not configured' });
+
+  const { plan } = req.query;
+  const validPlans = ['team', 'business', 'power'];
+  if (!plan || !validPlans.includes(plan)) {
+    return res.status(400).json({ error: 'Invalid plan. Use: team, business, or power' });
+  }
+
+  const priceId = plan === 'power' ? process.env.STRIPE_PRICE_POWER
+    : plan === 'business' ? process.env.STRIPE_PRICE_BUSINESS
+    : process.env.STRIPE_PRICE_TEAM || process.env.STRIPE_PRICE_ID;
+
+  if (!priceId) return res.status(500).json({ error: 'No Stripe price configured for this plan' });
+
+  try {
+    const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+    const landingUrl = process.env.LANDING_URL || 'https://my-app-hub.com';
+
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      line_items: [{ price: priceId, quantity: 1 }],
+      success_url: `${clientUrl}/register?stripe_session={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${landingUrl}/#pricing`,
+      metadata: { plan }
+    });
+
+    res.redirect(303, session.url);
+  } catch (err) {
+    console.error('Landing checkout error:', err);
+    res.status(500).json({ error: 'Failed to create checkout session' });
+  }
+});
+
+// GET /api/subscription/verify-session?session_id=xxx — verify a completed Stripe session (public)
+router.get('/verify-session', async (req, res) => {
+  const stripe = getStripe();
+  if (!stripe) return res.status(500).json({ error: 'Billing is not configured' });
+
+  const { session_id } = req.query;
+  if (!session_id) return res.status(400).json({ error: 'session_id is required' });
+
+  try {
+    const session = await stripe.checkout.sessions.retrieve(session_id);
+    if (session.payment_status !== 'paid') {
+      return res.status(400).json({ error: 'Session is not paid', paymentStatus: session.payment_status });
+    }
+
+    const plan = session.metadata?.plan || 'team';
+    res.json({ valid: true, plan, email: session.customer_details?.email || null });
+  } catch (err) {
+    console.error('Verify session error:', err);
+    res.status(400).json({ error: 'Invalid session' });
+  }
+});
+
 // POST /api/subscription/checkout
 router.post('/checkout', auth, adminOnly, async (req, res) => {
   const stripe = getStripe();

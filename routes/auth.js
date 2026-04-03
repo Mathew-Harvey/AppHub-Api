@@ -8,6 +8,19 @@ const { getLimits } = require('../config/plans');
 const { seedDemoApps } = require('../config/demoApps');
 const { sendPasswordReset, sendWelcome } = require('../services/email');
 
+function getStripe() {
+  if (!process.env.STRIPE_SECRET_KEY) return null;
+  return require('stripe')(process.env.STRIPE_SECRET_KEY);
+}
+
+function planFromPriceId(priceId) {
+  if (priceId === process.env.STRIPE_PRICE_POWER) return 'power';
+  if (priceId === process.env.STRIPE_PRICE_BUSINESS) return 'business';
+  if (priceId === process.env.STRIPE_PRICE_TEAM) return 'team';
+  if (priceId === process.env.STRIPE_PRICE_ID) return 'team';
+  return 'team';
+}
+
 const router = express.Router();
 
 function getCookieOptions() {
@@ -78,7 +91,7 @@ async function getUserProfile(userId) {
 
 // POST /api/auth/register
 router.post('/register', async (req, res) => {
-  const { email, password, displayName, workspaceName, inviteCode } = req.body;
+  const { email, password, displayName, workspaceName, inviteCode, stripeSessionId } = req.body;
 
   if (!email || !password || !displayName) {
     return res.status(400).json({ error: 'Email, password, and display name are required' });
@@ -156,6 +169,29 @@ router.post('/register', async (req, res) => {
     // Seed demo apps for brand-new workspaces (not invite-based registrations)
     if (!inviteCode) {
       await seedDemoApps(client, workspaceId, userResult.rows[0].id);
+    }
+
+    // Link pre-paid Stripe subscription from landing page checkout
+    if (stripeSessionId && !inviteCode) {
+      const stripe = getStripe();
+      if (stripe) {
+        try {
+          const session = await stripe.checkout.sessions.retrieve(stripeSessionId);
+          if (session.payment_status === 'paid' && session.subscription) {
+            const sub = await stripe.subscriptions.retrieve(session.subscription);
+            const plan = planFromPriceId(sub.items?.data?.[0]?.price?.id);
+            await stripe.customers.update(session.customer, {
+              metadata: { workspaceId }
+            });
+            await client.query(
+              'UPDATE workspaces SET plan = $1, stripe_customer_id = $2, stripe_subscription_id = $3 WHERE id = $4',
+              [plan, session.customer, session.subscription, workspaceId]
+            );
+          }
+        } catch (stripeErr) {
+          console.error('Stripe session linking failed (workspace created on free tier):', stripeErr.message);
+        }
+      }
     }
 
     await client.query('COMMIT');
