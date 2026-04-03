@@ -1746,3 +1746,169 @@ describe('Builder API', () => {
     await pool.query("UPDATE workspaces SET plan = 'free' WHERE slug = 'test-workspace'");
   });
 });
+
+// ─── Per-user permissions: members get free tier ───────────────────────────
+
+describe('Per-user permission model', () => {
+  let permMemberCookie;
+
+  beforeAll(async () => {
+    // Re-activate member and login
+    await pool.query("UPDATE users SET is_active = true WHERE email = 'member@test.com'");
+    const login = await request(app)
+      .post('/api/auth/login')
+      .send({ email: 'member@test.com', password: 'password123' });
+    permMemberCookie = login.headers['set-cookie'];
+  });
+
+  describe('Member gets free tier even when workspace is on paid plan', () => {
+    beforeAll(async () => {
+      await pool.query("UPDATE workspaces SET plan = 'power' WHERE slug = 'test-workspace'");
+    });
+
+    afterAll(async () => {
+      await pool.query("UPDATE workspaces SET plan = 'free' WHERE slug = 'test-workspace'");
+    });
+
+    it('admin /me returns workspace plan', async () => {
+      const res = await request(app)
+        .get('/api/auth/me')
+        .set('Cookie', adminCookie);
+      expect(res.status).toBe(200);
+      expect(res.body.user.workspace.plan).toBe('power');
+      expect(res.body.user.workspace.workspacePlan).toBe('power');
+    });
+
+    it('member /me returns free effective plan with workspacePlan', async () => {
+      const res = await request(app)
+        .get('/api/auth/me')
+        .set('Cookie', permMemberCookie);
+      expect(res.status).toBe(200);
+      expect(res.body.user.workspace.plan).toBe('free');
+      expect(res.body.user.workspace.workspacePlan).toBe('power');
+    });
+
+    it('admin subscription status shows workspace plan', async () => {
+      const res = await request(app)
+        .get('/api/subscription/status')
+        .set('Cookie', adminCookie);
+      expect(res.status).toBe(200);
+      expect(res.body.effectivePlan).toBe('power');
+      expect(res.body.isInvitedMember).toBe(false);
+    });
+
+    it('member subscription status shows free effective plan', async () => {
+      const res = await request(app)
+        .get('/api/subscription/status')
+        .set('Cookie', permMemberCookie);
+      expect(res.status).toBe(200);
+      expect(res.body.effectivePlan).toBe('free');
+      expect(res.body.workspacePlan).toBe('power');
+      expect(res.body.isInvitedMember).toBe(true);
+      expect(res.body.upgradeAvailable).toBe(true);
+    });
+
+    it('member cannot use AI conversions on paid workspace', async () => {
+      const res = await request(app)
+        .post('/api/apps/convert')
+        .set('Cookie', permMemberCookie)
+        .attach('appFile', Buffer.from('const x = 1;'), 'app.js');
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('upgrade_required');
+      expect(res.body.upgradeAvailable).toBe(true);
+    });
+
+    it('admin can use AI conversions on paid workspace', async () => {
+      // Admin on power plan should pass requirePaidAI (even if no AI key configured)
+      const res = await request(app)
+        .post('/api/apps/convert')
+        .set('Cookie', adminCookie)
+        .attach('appFile', Buffer.from('const x = 1;'), 'app.js');
+      // Should not get 403 upgrade_required — may get other errors (no AI key, etc.)
+      expect(res.status).not.toBe(403);
+    });
+
+    it('member cannot create builder session on paid workspace', async () => {
+      const res = await request(app)
+        .post('/api/builder/sessions')
+        .set('Cookie', permMemberCookie)
+        .send({ name: 'Member Build' });
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe('upgrade_required');
+      expect(res.body.upgradeAvailable).toBe(true);
+    });
+
+    it('admin can create builder session on paid workspace', async () => {
+      const res = await request(app)
+        .post('/api/builder/sessions')
+        .set('Cookie', adminCookie)
+        .send({ name: 'Admin Build' });
+      expect(res.status).toBe(201);
+      // Clean up
+      if (res.body.session?.id) {
+        await request(app)
+          .delete(`/api/builder/sessions/${res.body.session.id}`)
+          .set('Cookie', adminCookie);
+      }
+    });
+
+    it('member can still view all team-visible apps', async () => {
+      const res = await request(app)
+        .get('/api/apps')
+        .set('Cookie', permMemberCookie);
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body.apps)).toBe(true);
+    });
+
+    it('member app limit counts only their own apps', async () => {
+      // Member on free tier (5 app limit) — count only member's own apps
+      const upload = await request(app)
+        .post('/api/apps/upload')
+        .set('Cookie', permMemberCookie)
+        .attach('appFile', Buffer.from('<html><body>Member App</body></html>'), 'member-app.html')
+        .field('name', 'Member App');
+      expect(upload.status).toBe(201);
+    });
+  });
+
+  describe('Checkout-landing accepts creator alias', () => {
+    it('accepts plan=creator as valid', async () => {
+      const res = await request(app)
+        .get('/api/subscription/checkout-landing?plan=creator');
+      // Either 303 (redirect to Stripe) or 500 (no Stripe config) — not 400
+      expect(res.status).not.toBe(400);
+    });
+
+    it('still accepts plan=business', async () => {
+      const res = await request(app)
+        .get('/api/subscription/checkout-landing?plan=business');
+      expect(res.status).not.toBe(400);
+    });
+  });
+
+  describe('Business plan displays as Creator', () => {
+    beforeAll(async () => {
+      await pool.query("UPDATE workspaces SET plan = 'business' WHERE slug = 'test-workspace'");
+    });
+
+    afterAll(async () => {
+      await pool.query("UPDATE workspaces SET plan = 'free' WHERE slug = 'test-workspace'");
+    });
+
+    it('admin /me shows Creator as plan name', async () => {
+      const res = await request(app)
+        .get('/api/auth/me')
+        .set('Cookie', adminCookie);
+      expect(res.status).toBe(200);
+      expect(res.body.user.workspace.planLimits.planName).toBe('Creator');
+    });
+
+    it('subscription status shows Creator name', async () => {
+      const res = await request(app)
+        .get('/api/subscription/status')
+        .set('Cookie', adminCookie);
+      expect(res.status).toBe(200);
+      expect(res.body.planName).toBe('Creator');
+    });
+  });
+});

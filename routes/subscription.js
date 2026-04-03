@@ -1,7 +1,7 @@
 const express = require('express');
 const pool = require('../config/db');
 const { auth, adminOnly } = require('../middleware/auth');
-const { getLimits, getPlan } = require('../config/plans');
+const { getLimits, getPlan, getEffectivePlan } = require('../config/plans');
 
 const router = express.Router();
 
@@ -44,7 +44,8 @@ router.get('/status', auth, async (req, res) => {
     if (ws.rows.length === 0) return res.status(404).json({ error: 'Workspace not found' });
 
     const row = ws.rows[0];
-    const effectivePlan = bypassPlan ? 'power' : row.plan;
+    const workspacePlan = bypassPlan ? 'power' : row.plan;
+    const effectivePlan = getEffectivePlan(workspacePlan, req.user.role);
     const limits = getLimits(effectivePlan);
     const planDef = getPlan(effectivePlan);
 
@@ -55,9 +56,14 @@ router.get('/status', auth, async (req, res) => {
 
     const builderUsed = row.builder_tokens_used || 0;
     const builderLimit = planDef.builderTokenLimit;
+    const isInvitedMember = req.user.role !== 'admin';
 
     res.json({
       ...limits,
+      workspacePlan,
+      effectivePlan,
+      isInvitedMember,
+      upgradeAvailable: isInvitedMember && workspacePlan !== 'free',
       usage: {
         apps: parseInt(appCount.rows[0].total),
         members: parseInt(memberCount.rows[0].total),
@@ -82,11 +88,13 @@ router.get('/checkout-landing', async (req, res) => {
   const stripe = getStripe();
   if (!stripe) return res.status(500).json({ error: 'Billing is not configured' });
 
-  const { plan } = req.query;
-  const validPlans = ['team', 'business', 'power'];
-  if (!plan || !validPlans.includes(plan)) {
-    return res.status(400).json({ error: 'Invalid plan. Use: team, business, or power' });
+  const rawPlan = req.query.plan;
+  const validPlans = ['team', 'business', 'creator', 'power'];
+  if (!rawPlan || !validPlans.includes(rawPlan)) {
+    return res.status(400).json({ error: 'Invalid plan. Use: team, creator, or power' });
   }
+  // Normalize: 'creator' is the display name for 'business' tier
+  const plan = rawPlan === 'creator' ? 'business' : rawPlan;
 
   const priceId = plan === 'power' ? process.env.STRIPE_PRICE_POWER
     : plan === 'business' ? process.env.STRIPE_PRICE_BUSINESS

@@ -20,7 +20,7 @@ const PLANS = {
     priceMonthly: 1200
   },
   business: {
-    name: 'Business',
+    name: 'Creator',
     maxApps: Infinity,
     maxMembers: Infinity,
     aiConversions: true,
@@ -45,6 +45,16 @@ function getPlan(planKey) {
   return PLANS[planKey] || PLANS.free;
 }
 
+/**
+ * Returns the effective plan for a user based on their role.
+ * Admins get the full workspace plan. Invited members get free tier
+ * for creation limits but can still VIEW all workspace content.
+ */
+function getEffectivePlan(workspacePlan, userRole) {
+  if (userRole === 'admin') return workspacePlan || 'free';
+  return 'free';
+}
+
 function getLimits(planKey) {
   const plan = getPlan(planKey);
   return {
@@ -64,4 +74,4 @@ function hasAppBuilder(planKey) {
   return getPlan(planKey).appBuilder === true;
 }
 
-module.exports = { PLANS, getPlan, getLimits, hasAppBuilder };
+module.exports = { PLANS, getPlan, getEffectivePlan, getLimits, hasAppBuilder };

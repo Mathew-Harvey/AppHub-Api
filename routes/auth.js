@@ -4,7 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
 const { auth } = require('../middleware/auth');
-const { getLimits } = require('../config/plans');
+const { getLimits, getEffectivePlan } = require('../config/plans');
 const { seedDemoApps } = require('../config/demoApps');
 const { sendPasswordReset, sendWelcome } = require('../services/email');
 
@@ -67,7 +67,8 @@ async function getUserProfile(userId) {
 
   const row = result.rows[0];
   const bypassPlan = process.env.DEV_BYPASS_PLAN === 'true';
-  const plan = bypassPlan ? 'power' : (row.plan || 'free');
+  const workspacePlan = bypassPlan ? 'power' : (row.plan || 'free');
+  const effectivePlan = getEffectivePlan(workspacePlan, row.role);
   const logoVersion = row.workspace_updated_at ? new Date(row.workspace_updated_at).getTime() : '';
   return {
     id: row.id,
@@ -83,8 +84,9 @@ async function getUserProfile(userId) {
       accentColor: row.accent_color,
       primaryColorLight: row.primary_color_light || '#ffffff',
       accentColorLight: row.accent_color_light || '#d63851',
-      plan,
-      planLimits: getLimits(plan)
+      plan: effectivePlan,
+      workspacePlan,
+      planLimits: getLimits(effectivePlan)
     }
   };
 }
