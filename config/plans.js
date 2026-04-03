@@ -24,13 +24,13 @@ const PLANS = {
     maxApps: Infinity,
     maxMembers: Infinity,
     aiConversions: true,
-    aiConversionsLimit: 100,
+    aiConversionsLimit: Infinity,
     appBuilder: true,
     builderTokenLimit: 500000,
     priceMonthly: 2900
   },
   power: {
-    name: 'Power User',
+    name: 'Pro',
     maxApps: Infinity,
     maxMembers: Infinity,
     aiConversions: true,
