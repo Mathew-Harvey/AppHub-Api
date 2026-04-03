@@ -1,19 +1,43 @@
 const PLANS = {
   free: {
     name: 'Free',
-    maxApps: 3,
+    maxApps: 5,
     maxMembers: 3,
     aiConversions: false,
     aiConversionsLimit: 0,
+    appBuilder: false,
+    builderTokenLimit: 0,
     priceMonthly: 0
   },
-  pro: {
-    name: 'Pro',
+  team: {
+    name: 'Team',
+    maxApps: 50,
+    maxMembers: 15,
+    aiConversions: true,
+    aiConversionsLimit: 20,
+    appBuilder: false,
+    builderTokenLimit: 0,
+    priceMonthly: 1200
+  },
+  business: {
+    name: 'Business',
     maxApps: Infinity,
     maxMembers: Infinity,
     aiConversions: true,
-    aiConversionsLimit: 50,
-    priceMonthly: 1200 // cents
+    aiConversionsLimit: 100,
+    appBuilder: true,
+    builderTokenLimit: 500000,
+    priceMonthly: 2900
+  },
+  power: {
+    name: 'Power User',
+    maxApps: Infinity,
+    maxMembers: Infinity,
+    aiConversions: true,
+    aiConversionsLimit: Infinity,
+    appBuilder: true,
+    builderTokenLimit: Infinity,
+    priceMonthly: 7900
   }
 };
 
@@ -29,9 +53,15 @@ function getLimits(planKey) {
     maxApps: plan.maxApps === Infinity ? null : plan.maxApps,
     maxMembers: plan.maxMembers === Infinity ? null : plan.maxMembers,
     aiConversions: plan.aiConversions,
-    aiConversionsLimit: plan.aiConversionsLimit,
+    aiConversionsLimit: plan.aiConversionsLimit === Infinity ? null : plan.aiConversionsLimit,
+    appBuilder: plan.appBuilder,
+    builderTokenLimit: plan.builderTokenLimit === Infinity ? null : plan.builderTokenLimit,
     priceMonthly: plan.priceMonthly
   };
 }
 
-module.exports = { PLANS, getPlan, getLimits };
+function hasAppBuilder(planKey) {
+  return getPlan(planKey).appBuilder === true;
+}
+
+module.exports = { PLANS, getPlan, getLimits, hasAppBuilder };

@@ -1,7 +1,7 @@
 const express = require('express');
 const pool = require('../config/db');
 const { auth, adminOnly } = require('../middleware/auth');
-const { getLimits } = require('../config/plans');
+const { getLimits, getPlan } = require('../config/plans');
 
 const router = express.Router();
 
@@ -10,26 +10,51 @@ function getStripe() {
   return require('stripe')(process.env.STRIPE_SECRET_KEY);
 }
 
-// GET /api/subscription/status — current plan, usage, and limits
+/**
+ * Maps a Stripe price ID to a plan key. Configure via env vars:
+ *   STRIPE_PRICE_TEAM=price_xxx
+ *   STRIPE_PRICE_BUSINESS=price_yyy
+ *   STRIPE_PRICE_POWER=price_zzz
+ * Falls back to STRIPE_PRICE_ID -> 'team' for single-price setups.
+ */
+function planFromPriceId(priceId) {
+  if (priceId === process.env.STRIPE_PRICE_POWER) return 'power';
+  if (priceId === process.env.STRIPE_PRICE_BUSINESS) return 'business';
+  if (priceId === process.env.STRIPE_PRICE_TEAM) return 'team';
+  if (priceId === process.env.STRIPE_PRICE_ID) return 'team';
+  return 'team';
+}
+
+function extractPriceId(subscription) {
+  return subscription.items?.data?.[0]?.price?.id || null;
+}
+
+// GET /api/subscription/status
 router.get('/status', auth, async (req, res) => {
   try {
     const bypassPlan = process.env.DEV_BYPASS_PLAN === 'true';
 
     const ws = await pool.query(
       `SELECT plan, stripe_customer_id, stripe_subscription_id,
-              ai_conversions_used, ai_conversions_reset_at
+              ai_conversions_used, ai_conversions_reset_at,
+              builder_tokens_used, builder_tokens_reset_at
        FROM workspaces WHERE id = $1`,
       [req.user.workspaceId]
     );
     if (ws.rows.length === 0) return res.status(404).json({ error: 'Workspace not found' });
 
     const row = ws.rows[0];
-    const limits = bypassPlan ? getLimits('pro') : getLimits(row.plan);
+    const effectivePlan = bypassPlan ? 'power' : row.plan;
+    const limits = getLimits(effectivePlan);
+    const planDef = getPlan(effectivePlan);
 
     const [appCount, memberCount] = await Promise.all([
       pool.query('SELECT COUNT(*) AS total FROM apps WHERE workspace_id = $1 AND is_active = true', [req.user.workspaceId]),
       pool.query('SELECT COUNT(*) AS total FROM users WHERE workspace_id = $1 AND is_active = true', [req.user.workspaceId])
     ]);
+
+    const builderUsed = row.builder_tokens_used || 0;
+    const builderLimit = planDef.builderTokenLimit;
 
     res.json({
       ...limits,
@@ -37,7 +62,11 @@ router.get('/status', auth, async (req, res) => {
         apps: parseInt(appCount.rows[0].total),
         members: parseInt(memberCount.rows[0].total),
         aiConversions: row.ai_conversions_used || 0,
-        aiConversionsResetAt: row.ai_conversions_reset_at
+        aiConversionsResetAt: row.ai_conversions_reset_at,
+        builderTokensUsed: builderUsed,
+        builderTokensLimit: builderLimit === Infinity ? null : builderLimit,
+        builderTokensResetAt: row.builder_tokens_reset_at,
+        builderTokensPercentage: builderLimit === Infinity ? 0 : (builderLimit > 0 ? Math.round((builderUsed / builderLimit) * 10000) / 100 : 0)
       },
       hasStripeSubscription: bypassPlan ? true : !!row.stripe_subscription_id
     });
@@ -47,11 +76,20 @@ router.get('/status', auth, async (req, res) => {
   }
 });
 
-// POST /api/subscription/checkout — create Stripe Checkout session (admin only)
+// POST /api/subscription/checkout
 router.post('/checkout', auth, adminOnly, async (req, res) => {
   const stripe = getStripe();
-  if (!stripe || !process.env.STRIPE_PRICE_ID) {
+  if (!stripe) {
     return res.status(500).json({ error: 'Billing is not configured' });
+  }
+
+  const { planKey } = req.body;
+  const priceId = planKey === 'power' ? process.env.STRIPE_PRICE_POWER
+    : planKey === 'business' ? process.env.STRIPE_PRICE_BUSINESS
+    : process.env.STRIPE_PRICE_TEAM || process.env.STRIPE_PRICE_ID;
+
+  if (!priceId) {
+    return res.status(500).json({ error: 'No Stripe price configured for this plan' });
   }
 
   try {
@@ -60,9 +98,6 @@ router.post('/checkout', auth, adminOnly, async (req, res) => {
       [req.user.workspaceId]
     );
     if (ws.rows.length === 0) return res.status(404).json({ error: 'Workspace not found' });
-    if (ws.rows[0].plan === 'pro') {
-      return res.status(400).json({ error: 'Workspace is already on the Pro plan' });
-    }
 
     let customerId = ws.rows[0].stripe_customer_id;
 
@@ -81,7 +116,7 @@ router.post('/checkout', auth, adminOnly, async (req, res) => {
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
       mode: 'subscription',
-      line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
+      line_items: [{ price: priceId, quantity: 1 }],
       success_url: `${clientUrl}/settings?upgraded=true`,
       cancel_url: `${clientUrl}/settings?cancelled=true`,
       metadata: { workspaceId: req.user.workspaceId }
@@ -94,7 +129,7 @@ router.post('/checkout', auth, adminOnly, async (req, res) => {
   }
 });
 
-// POST /api/subscription/portal — create Stripe Customer Portal session (admin only)
+// POST /api/subscription/portal
 router.post('/portal', auth, adminOnly, async (req, res) => {
   const stripe = getStripe();
   if (!stripe) {
@@ -125,7 +160,7 @@ router.post('/portal', auth, adminOnly, async (req, res) => {
   }
 });
 
-// POST /api/subscription/webhook — Stripe webhook handler (no auth, raw body)
+// POST /api/subscription/webhook
 router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   const stripe = getStripe();
   if (!stripe || !process.env.STRIPE_WEBHOOK_SECRET) {
@@ -150,11 +185,13 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         const session = event.data.object;
         const workspaceId = session.metadata?.workspaceId;
         if (workspaceId && session.subscription) {
+          const sub = await stripe.subscriptions.retrieve(session.subscription);
+          const plan = planFromPriceId(extractPriceId(sub));
           await pool.query(
-            `UPDATE workspaces SET plan = 'pro', stripe_subscription_id = $1, updated_at = NOW() WHERE id = $2`,
-            [session.subscription, workspaceId]
+            `UPDATE workspaces SET plan = $1, stripe_subscription_id = $2, updated_at = NOW() WHERE id = $3`,
+            [plan, session.subscription, workspaceId]
           );
-          console.log(`Workspace ${workspaceId} upgraded to pro`);
+          console.log(`Workspace ${workspaceId} upgraded to ${plan}`);
         }
         break;
       }
@@ -166,11 +203,12 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
 
         const ws = await pool.query('SELECT id FROM workspaces WHERE stripe_customer_id = $1', [customerId]);
         if (ws.rows.length > 0) {
+          const plan = isActive ? planFromPriceId(extractPriceId(sub)) : 'free';
           await pool.query(
             `UPDATE workspaces SET plan = $1, stripe_subscription_id = $2, updated_at = NOW() WHERE id = $3`,
-            [isActive ? 'pro' : 'free', sub.id, ws.rows[0].id]
+            [plan, sub.id, ws.rows[0].id]
           );
-          console.log(`Workspace ${ws.rows[0].id} subscription updated → ${isActive ? 'pro' : 'free'}`);
+          console.log(`Workspace ${ws.rows[0].id} subscription updated -> ${plan}`);
         }
         break;
       }

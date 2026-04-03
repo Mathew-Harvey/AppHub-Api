@@ -214,6 +214,58 @@ const migrate = async () => {
       ) sub WHERE apps.id = sub.id AND apps.sort_order = 0
     `);
 
+    // Builder token tracking on workspaces
+    await client.query('ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS builder_tokens_used INTEGER DEFAULT 0');
+    await client.query('ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS builder_tokens_reset_at TIMESTAMP DEFAULT NOW()');
+
+    // Builder sessions — tracks an app builder conversation across generate/revise cycles
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS builder_sessions (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        app_type VARCHAR(50),
+        name VARCHAR(100) NOT NULL,
+        description TEXT,
+        features JSONB DEFAULT '[]',
+        style_preferences JSONB DEFAULT '{}',
+        complexity VARCHAR(20) DEFAULT 'moderate' CHECK (complexity IN ('simple', 'moderate', 'complex')),
+        target_audience VARCHAR(255),
+        additional_notes TEXT,
+        status VARCHAR(20) DEFAULT 'draft' CHECK (status IN ('draft', 'generating', 'done', 'published')),
+        current_html TEXT,
+        revision_count INTEGER DEFAULT 0,
+        total_tokens_used INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_builder_sessions_workspace ON builder_sessions(workspace_id)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_builder_sessions_user ON builder_sessions(user_id)');
+
+    // Builder jobs — async generation/revision tracking (same pattern as conversion_jobs)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS builder_jobs (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        session_id UUID REFERENCES builder_sessions(id) ON DELETE CASCADE,
+        workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        job_type VARCHAR(20) DEFAULT 'generate' CHECK (job_type IN ('generate', 'revise', 'review')),
+        status VARCHAR(20) DEFAULT 'processing' CHECK (status IN ('processing', 'reviewing', 'done', 'failed')),
+        html TEXT,
+        review_notes JSONB,
+        user_feedback TEXT,
+        error TEXT,
+        input_tokens INTEGER DEFAULT 0,
+        output_tokens INTEGER DEFAULT 0,
+        cache_read_tokens INTEGER DEFAULT 0,
+        cache_creation_tokens INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_builder_jobs_session ON builder_jobs(session_id)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_builder_jobs_created ON builder_jobs(created_at)');
+
     await client.query('COMMIT');
     console.log('Database migration completed successfully');
   } catch (err) {

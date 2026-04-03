@@ -53,7 +53,7 @@ async function getUserProfile(userId) {
 
   const row = result.rows[0];
   const bypassPlan = process.env.DEV_BYPASS_PLAN === 'true';
-  const plan = bypassPlan ? 'pro' : (row.plan || 'free');
+  const plan = bypassPlan ? 'power' : (row.plan || 'free');
   return {
     id: row.id,
     email: row.email,
@@ -69,9 +69,7 @@ async function getUserProfile(userId) {
       primaryColorLight: row.primary_color_light || '#ffffff',
       accentColorLight: row.accent_color_light || '#d63851',
       plan,
-      planLimits: bypassPlan
-        ? { plan: 'pro', planName: 'Pro', maxApps: null, maxMembers: null, aiConversions: true, aiConversionsLimit: 50, priceMonthly: 1200 }
-        : getLimits(plan)
+      planLimits: getLimits(plan)
     }
   };
 }

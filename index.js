@@ -14,6 +14,7 @@ const workspaceRoutes = require('./routes/workspace');
 const sandboxRoutes = require('./routes/sandbox');
 const subscriptionRoutes = require('./routes/subscription');
 const convertRoutes = require('./routes/convert');
+const builderRoutes = require('./routes/builder');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -112,6 +113,7 @@ app.use('/api/folders', apiLimiter, folderRoutes);
 app.use('/api/workspace', apiLimiter, workspaceRoutes);
 app.use('/api/subscription', apiLimiter, subscriptionRoutes);
 app.use('/api/convert', convertRoutes);
+app.use('/api/builder', apiLimiter, builderRoutes);
 app.use('/sandbox', sandboxRoutes);
 
 // Serve the converter frontend

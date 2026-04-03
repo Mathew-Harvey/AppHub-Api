@@ -590,9 +590,9 @@ describe('POST /api/apps/convert', () => {
     expect(res.body.error).toBe('upgrade_required');
   });
 
-  it('rejects when rate limit exceeded (pro plan)', async () => {
-    // Temporarily set plan to pro and max out conversions
-    await pool.query("UPDATE workspaces SET plan = 'pro', ai_conversions_used = 999 WHERE slug = 'test-workspace'");
+  it('rejects when rate limit exceeded (team plan)', async () => {
+    // Temporarily set plan to team and max out conversions
+    await pool.query("UPDATE workspaces SET plan = 'team', ai_conversions_used = 999 WHERE slug = 'test-workspace'");
 
     const res = await request(app)
       .post('/api/apps/convert')

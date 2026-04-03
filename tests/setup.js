@@ -36,6 +36,8 @@ async function migrate() {
         ai_conversions_reset_at TIMESTAMP DEFAULT NOW(),
         stripe_customer_id VARCHAR(255),
         stripe_subscription_id VARCHAR(255),
+        builder_tokens_used INTEGER DEFAULT 0,
+        builder_tokens_reset_at TIMESTAMP DEFAULT NOW(),
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
       )
@@ -153,6 +155,48 @@ async function migrate() {
         success BOOLEAN DEFAULT true,
         validation_errors JSONB,
         processing_time_ms INTEGER,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE builder_sessions (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        app_type VARCHAR(50),
+        name VARCHAR(100) NOT NULL,
+        description TEXT,
+        features JSONB DEFAULT '[]',
+        style_preferences JSONB DEFAULT '{}',
+        complexity VARCHAR(20) DEFAULT 'moderate' CHECK (complexity IN ('simple', 'moderate', 'complex')),
+        target_audience VARCHAR(255),
+        additional_notes TEXT,
+        status VARCHAR(20) DEFAULT 'draft' CHECK (status IN ('draft', 'generating', 'done', 'published')),
+        current_html TEXT,
+        revision_count INTEGER DEFAULT 0,
+        total_tokens_used INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE builder_jobs (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        session_id UUID REFERENCES builder_sessions(id) ON DELETE CASCADE,
+        workspace_id UUID REFERENCES workspaces(id) ON DELETE CASCADE,
+        user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+        job_type VARCHAR(20) DEFAULT 'generate' CHECK (job_type IN ('generate', 'revise', 'review')),
+        status VARCHAR(20) DEFAULT 'processing' CHECK (status IN ('processing', 'reviewing', 'done', 'failed')),
+        html TEXT,
+        review_notes JSONB,
+        user_feedback TEXT,
+        error TEXT,
+        input_tokens INTEGER DEFAULT 0,
+        output_tokens INTEGER DEFAULT 0,
+        cache_read_tokens INTEGER DEFAULT 0,
+        cache_creation_tokens INTEGER DEFAULT 0,
         created_at TIMESTAMP DEFAULT NOW()
       )
     `);

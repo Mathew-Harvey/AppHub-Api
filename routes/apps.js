@@ -6,7 +6,8 @@ const { auth, adminOnly, validateId } = require('../middleware/auth');
 const { detectFileType, validateHtmlContent } = require('../services/fileDetection');
 const { convertToHtml, checkConversionQuota, incrementConversionCount, fixHtmlErrors } = require('../services/aiConvert');
 const { validateHtmlErrors } = require('../services/htmlValidator');
-const { enforceAppLimit, requirePro } = require('../middleware/subscription');
+const { enforceAppLimit, requirePaidAI } = require('../middleware/subscription');
+const { getPlan } = require('../config/plans');
 
 const router = express.Router();
 
@@ -112,7 +113,7 @@ if (process.env.NODE_ENV !== 'test') setInterval(async () => {
 }, 10 * 60 * 1000);
 
 // POST /api/apps/convert — start AI conversion job (pro only, rate limited)
-router.post('/convert', auth, requirePro, upload.single('appFile'), async (req, res) => {
+router.post('/convert', auth, requirePaidAI, upload.single('appFile'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -320,13 +321,14 @@ router.post('/upload', auth, uploadLimiter, enforceAppLimit, upload.single('appF
 
     if (blockingErrors.length > 0) {
       const ws = await pool.query('SELECT plan FROM workspaces WHERE id = $1', [req.user.workspaceId]);
-      const plan = ws.rows[0]?.plan || 'free';
+      const planKey = ws.rows[0]?.plan || 'free';
+      const planDef = getPlan(planKey);
       const bypassPlan = process.env.DEV_BYPASS_PLAN === 'true';
 
-      if (plan !== 'pro' && !bypassPlan) {
+      if (!planDef.aiConversions && !bypassPlan) {
         return res.status(422).json({
           error: 'code_errors',
-          message: 'Your HTML file contains JavaScript errors. Upgrade to Pro to have errors automatically fixed by AI during upload.',
+          message: 'Your HTML file contains JavaScript errors. Upgrade to Team or higher to have errors automatically fixed by AI during upload.',
           errors: codeErrors,
           upgradeRequired: true
         });
@@ -534,13 +536,14 @@ router.put('/:id/file', auth, validateId, upload.single('appFile'), async (req, 
 
     if (blockingErrors.length > 0) {
       const ws = await pool.query('SELECT plan FROM workspaces WHERE id = $1', [req.user.workspaceId]);
-      const plan = ws.rows[0]?.plan || 'free';
+      const planKey = ws.rows[0]?.plan || 'free';
+      const planDef = getPlan(planKey);
       const bypassPlan = process.env.DEV_BYPASS_PLAN === 'true';
 
-      if (plan !== 'pro' && !bypassPlan) {
+      if (!planDef.aiConversions && !bypassPlan) {
         return res.status(422).json({
           error: 'code_errors',
-          message: 'Your HTML file contains JavaScript errors. Upgrade to Pro to have errors automatically fixed by AI during upload.',
+          message: 'Your HTML file contains JavaScript errors. Upgrade to Team or higher to have errors automatically fixed by AI during upload.',
           errors: codeErrors,
           upgradeRequired: true
         });
