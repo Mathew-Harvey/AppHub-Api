@@ -7,7 +7,6 @@ const {
   buildApp,
   reviseApp,
   getTokenUsage,
-  incrementTokenUsage,
   assessComplexity
 } = require('../services/appBuilder');
 
@@ -200,24 +199,17 @@ router.post('/sessions/:id/generate', auth, requireAppBuilder, checkTokenBudget,
     );
     const jobId = jobResult.rows[0].id;
 
-    // Run generation in background
-    buildApp(sess)
+    // Run generation in background — tokens are tracked incrementally by the service
+    buildApp(sess, { jobId, workspaceId: req.user.workspaceId })
       .then(async (result) => {
         await pool.query(
-          `UPDATE builder_jobs
-           SET status = 'done', html = $1, review_notes = $2,
-               input_tokens = $3, output_tokens = $4, cache_read_tokens = $5, cache_creation_tokens = $6
-           WHERE id = $7`,
-          [result.html, JSON.stringify(result.reviewNotes), result.inputTokens,
-           result.outputTokens, result.cacheReadTokens, result.cacheCreationTokens, jobId]
+          `UPDATE builder_jobs SET status = 'done', html = $1, review_notes = $2 WHERE id = $3`,
+          [result.html, JSON.stringify(result.reviewNotes), jobId]
         );
         await pool.query(
-          `UPDATE builder_sessions
-           SET status = 'done', current_html = $1, total_tokens_used = total_tokens_used + $2, updated_at = NOW()
-           WHERE id = $3`,
-          [result.html, result.outputTokens, sess.id]
+          `UPDATE builder_sessions SET status = 'done', current_html = $1, updated_at = NOW() WHERE id = $2`,
+          [result.html, sess.id]
         );
-        await incrementTokenUsage(req.user.workspaceId, result.outputTokens);
       })
       .catch(async (err) => {
         console.error('Builder generate error:', err);
@@ -276,24 +268,18 @@ router.post('/sessions/:id/revise', auth, requireAppBuilder, checkTokenBudget, b
     );
     const jobId = jobResult.rows[0].id;
 
-    reviseApp(sess.current_html, feedback.trim(), sess)
+    reviseApp(sess.current_html, feedback.trim(), sess, { jobId, workspaceId: req.user.workspaceId })
       .then(async (result) => {
         await pool.query(
-          `UPDATE builder_jobs
-           SET status = 'done', html = $1, review_notes = $2,
-               input_tokens = $3, output_tokens = $4, cache_read_tokens = $5, cache_creation_tokens = $6
-           WHERE id = $7`,
-          [result.html, JSON.stringify(result.reviewNotes), result.inputTokens,
-           result.outputTokens, result.cacheReadTokens, result.cacheCreationTokens, jobId]
+          `UPDATE builder_jobs SET status = 'done', html = $1, review_notes = $2 WHERE id = $3`,
+          [result.html, JSON.stringify(result.reviewNotes), jobId]
         );
         await pool.query(
           `UPDATE builder_sessions
-           SET status = 'done', current_html = $1, revision_count = revision_count + 1,
-               total_tokens_used = total_tokens_used + $2, updated_at = NOW()
-           WHERE id = $3`,
-          [result.html, result.outputTokens, sess.id]
+           SET status = 'done', current_html = $1, revision_count = revision_count + 1, updated_at = NOW()
+           WHERE id = $2`,
+          [result.html, sess.id]
         );
-        await incrementTokenUsage(req.user.workspaceId, result.outputTokens);
       })
       .catch(async (err) => {
         console.error('Builder revise error:', err);

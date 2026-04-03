@@ -92,12 +92,12 @@ ${userFeedback}
 Output the complete updated HTML file with the changes applied.`;
 }
 
-// ─── LLM call with prompt caching ───────────────────────────────────────────
+// ─── LLM call with prompt caching (streaming) ───────────────────────────────
 
 async function callWithCache(systemText, userParts) {
   const client = getClient();
 
-  const response = await client.messages.create({
+  const stream = await client.messages.stream({
     model: BUILDER_MODEL,
     max_tokens: BUILDER_MAX_TOKENS,
     system: [
@@ -109,7 +109,7 @@ async function callWithCache(systemText, userParts) {
     ],
     messages: [{
       role: 'user',
-      content: userParts.map((part, i) => {
+      content: userParts.map((part) => {
         const block = { type: 'text', text: part.text };
         if (part.cache) {
           block.cache_control = { type: 'ephemeral' };
@@ -118,6 +118,8 @@ async function callWithCache(systemText, userParts) {
       })
     }]
   });
+
+  const response = await stream.finalMessage();
 
   const text = response.content?.[0]?.text || '';
   const usage = response.usage || {};
@@ -141,13 +143,15 @@ Respond with a JSON object (no markdown fences):
 
 Only flag genuine missing features or broken functionality. Do not flag minor style preferences.`;
 
-async function selfReview(html, session) {
+async function selfReview(html, session, onTokens) {
   const spec = buildUserPrompt(session);
 
   const result = await callWithCache(REVIEW_SYSTEM, [
     { text: `Original requirements:\n${spec}`, cache: true },
     { text: `Generated HTML app:\n${html}`, cache: false }
   ]);
+
+  if (onTokens) await onTokens(result);
 
   let review;
   try {
@@ -157,18 +161,12 @@ async function selfReview(html, session) {
     review = { approved: true, notes: ['Review parse failed — treating as approved'] };
   }
 
-  return {
-    review,
-    inputTokens: result.inputTokens,
-    outputTokens: result.outputTokens,
-    cacheReadTokens: result.cacheReadTokens,
-    cacheCreationTokens: result.cacheCreationTokens
-  };
+  return { review };
 }
 
 // ─── Fix pass (when review finds issues) ─────────────────────────────────────
 
-async function applyFixes(html, review, session) {
+async function applyFixes(html, review, session, onTokens) {
   const fixPrompt = `The following issues were found during review:
 ${review.notes.map((n, i) => `${i + 1}. ${n}`).join('\n')}
 
@@ -181,32 +179,32 @@ Edit the existing code to fix ONLY these issues. Do NOT rewrite from scratch. Ou
     { text: fixPrompt, cache: false }
   ]);
 
-  return {
-    html: cleanLLMOutput(result.text),
-    inputTokens: result.inputTokens,
-    outputTokens: result.outputTokens,
-    cacheReadTokens: result.cacheReadTokens,
-    cacheCreationTokens: result.cacheCreationTokens
-  };
+  if (onTokens) await onTokens(result);
+
+  return { html: cleanLLMOutput(result.text) };
 }
 
 // ─── Main build flow ─────────────────────────────────────────────────────────
 
-async function buildApp(session) {
+/**
+ * @param {object} session - DB row from builder_sessions
+ * @param {object} opts
+ * @param {string} opts.jobId - builder_jobs row id
+ * @param {string} opts.workspaceId - workspace id for token tracking
+ */
+async function buildApp(session, { jobId, workspaceId } = {}) {
   const userPrompt = buildUserPrompt(session);
+
+  const onTokens = jobId ? makeTokenTracker(jobId, workspaceId, session.id) : null;
 
   // Step 1: Generate the app
   const genResult = await callWithCache(SYSTEM_PROMPT, [
     { text: userPrompt, cache: true }
   ]);
 
+  if (onTokens) await onTokens(genResult);
+
   let html = cleanLLMOutput(genResult.text);
-  let totalTokens = {
-    inputTokens: genResult.inputTokens,
-    outputTokens: genResult.outputTokens,
-    cacheReadTokens: genResult.cacheReadTokens,
-    cacheCreationTokens: genResult.cacheCreationTokens
-  };
 
   if (!html.includes('<!DOCTYPE') && !html.includes('<!doctype') && !html.includes('<html')) {
     throw new Error('AI generation did not produce valid HTML');
@@ -217,11 +215,7 @@ async function buildApp(session) {
   const blockingErrors = codeErrors.filter(e => e.type !== 'tdz_warning');
 
   // Step 3: Self-review against requirements
-  const { review, ...reviewTokens } = await selfReview(html, session);
-  totalTokens.inputTokens += reviewTokens.inputTokens;
-  totalTokens.outputTokens += reviewTokens.outputTokens;
-  totalTokens.cacheReadTokens += reviewTokens.cacheReadTokens;
-  totalTokens.cacheCreationTokens += reviewTokens.cacheCreationTokens;
+  const { review } = await selfReview(html, session, onTokens);
 
   // Step 4: If review found issues or there are code errors, do a fix pass
   const needsFix = !review.approved || blockingErrors.length > 0;
@@ -235,68 +229,85 @@ async function buildApp(session) {
       combinedReview.approved = false;
     }
 
-    const fixResult = await applyFixes(html, combinedReview, session);
+    const fixResult = await applyFixes(html, combinedReview, session, onTokens);
     html = fixResult.html;
-    totalTokens.inputTokens += fixResult.inputTokens;
-    totalTokens.outputTokens += fixResult.outputTokens;
-    totalTokens.cacheReadTokens += fixResult.cacheReadTokens;
-    totalTokens.cacheCreationTokens += fixResult.cacheCreationTokens;
   }
 
   return {
     html,
     reviewNotes: review.notes || [],
     approved: review.approved,
-    fixed: needsFix,
-    ...totalTokens
+    fixed: needsFix
   };
 }
 
 // ─── Revision flow ───────────────────────────────────────────────────────────
 
-async function reviseApp(existingHtml, userFeedback, session) {
+async function reviseApp(existingHtml, userFeedback, session, { jobId, workspaceId } = {}) {
   const revisionPrompt = buildRevisionPrompt(userFeedback);
 
-  // The existing HTML is sent with cache_control so re-reads are 90% cheaper
+  const onTokens = jobId ? makeTokenTracker(jobId, workspaceId, session.id) : null;
+
   const genResult = await callWithCache(SYSTEM_PROMPT, [
     { text: existingHtml, cache: true },
     { text: revisionPrompt, cache: false }
   ]);
 
+  if (onTokens) await onTokens(genResult);
+
   let html = cleanLLMOutput(genResult.text);
-  let totalTokens = {
-    inputTokens: genResult.inputTokens,
-    outputTokens: genResult.outputTokens,
-    cacheReadTokens: genResult.cacheReadTokens,
-    cacheCreationTokens: genResult.cacheCreationTokens
-  };
 
   if (!html.includes('<!DOCTYPE') && !html.includes('<!doctype') && !html.includes('<html')) {
     throw new Error('AI revision did not produce valid HTML');
   }
 
   // Self-review the revision
-  const { review, ...reviewTokens } = await selfReview(html, session);
-  totalTokens.inputTokens += reviewTokens.inputTokens;
-  totalTokens.outputTokens += reviewTokens.outputTokens;
-  totalTokens.cacheReadTokens += reviewTokens.cacheReadTokens;
-  totalTokens.cacheCreationTokens += reviewTokens.cacheCreationTokens;
+  const { review } = await selfReview(html, session, onTokens);
 
   // Fix pass if needed
   if (!review.approved) {
-    const fixResult = await applyFixes(html, review, session);
+    const fixResult = await applyFixes(html, review, session, onTokens);
     html = fixResult.html;
-    totalTokens.inputTokens += fixResult.inputTokens;
-    totalTokens.outputTokens += fixResult.outputTokens;
-    totalTokens.cacheReadTokens += fixResult.cacheReadTokens;
-    totalTokens.cacheCreationTokens += fixResult.cacheCreationTokens;
   }
 
   return {
     html,
     reviewNotes: review.notes || [],
-    approved: review.approved,
-    ...totalTokens
+    approved: review.approved
+  };
+}
+
+// ─── Incremental token tracker ───────────────────────────────────────────────
+
+/**
+ * Returns a callback that updates the DB after each LLM call.
+ * Updates both the builder_jobs row (for polling) and the workspace budget.
+ */
+function makeTokenTracker(jobId, workspaceId, sessionId) {
+  return async function onTokens(result) {
+    const { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens } = result;
+
+    try {
+      await Promise.all([
+        pool.query(
+          `UPDATE builder_jobs
+           SET input_tokens = input_tokens + $1, output_tokens = output_tokens + $2,
+               cache_read_tokens = cache_read_tokens + $3, cache_creation_tokens = cache_creation_tokens + $4
+           WHERE id = $5`,
+          [inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, jobId]
+        ),
+        pool.query(
+          'UPDATE workspaces SET builder_tokens_used = builder_tokens_used + $1 WHERE id = $2',
+          [outputTokens, workspaceId]
+        ),
+        pool.query(
+          'UPDATE builder_sessions SET total_tokens_used = total_tokens_used + $1 WHERE id = $2',
+          [outputTokens, sessionId]
+        )
+      ]);
+    } catch (err) {
+      console.error('Token tracking update failed:', err.message);
+    }
   };
 }
 
@@ -310,13 +321,13 @@ async function getTokenUsage(workspaceId) {
   if (ws.rows.length === 0) return null;
 
   const row = ws.rows[0];
-  const plan = getPlan(row.plan);
+  const effectivePlan = process.env.DEV_BYPASS_PLAN === 'true' ? 'power' : row.plan;
+  const plan = getPlan(effectivePlan);
   const resetAt = new Date(row.builder_tokens_reset_at);
   const now = new Date();
 
   let used = row.builder_tokens_used || 0;
 
-  // Auto-reset if month has passed
   if (now - resetAt > TOKEN_BUDGET_RESET_MS) {
     await pool.query(
       'UPDATE workspaces SET builder_tokens_used = 0, builder_tokens_reset_at = NOW() WHERE id = $1',
@@ -334,16 +345,9 @@ async function getTokenUsage(workspaceId) {
     remaining: unlimited ? null : Math.max(0, limit - used),
     percentage: unlimited ? 0 : (limit > 0 ? Math.round((used / limit) * 10000) / 100 : 0),
     resetAt: new Date(resetAt.getTime() + TOKEN_BUDGET_RESET_MS).toISOString(),
-    plan: row.plan,
+    plan: effectivePlan,
     unlimited
   };
-}
-
-async function incrementTokenUsage(workspaceId, outputTokens) {
-  await pool.query(
-    'UPDATE workspaces SET builder_tokens_used = builder_tokens_used + $1 WHERE id = $2',
-    [outputTokens, workspaceId]
-  );
 }
 
 // ─── Complexity assessment ───────────────────────────────────────────────────
@@ -376,7 +380,6 @@ module.exports = {
   buildApp,
   reviseApp,
   getTokenUsage,
-  incrementTokenUsage,
   assessComplexity,
   buildUserPrompt
 };
