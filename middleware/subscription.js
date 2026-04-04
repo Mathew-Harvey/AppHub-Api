@@ -15,16 +15,19 @@ function enforceAppLimit(req, res, next) {
 
       if (plan.maxApps === Infinity) return next();
 
-      // Count only apps uploaded by this user in this workspace
+      // Count apps across ALL workspaces owned by this user (by email) to prevent
+      // bypass via multiple workspace creation
       const count = await pool.query(
-        'SELECT COUNT(*) AS total FROM apps WHERE workspace_id = $1 AND uploaded_by = $2 AND is_active = true AND is_demo = false',
-        [req.user.workspaceId, req.user.id]
+        `SELECT COUNT(*) AS total FROM apps a
+         JOIN users u ON a.uploaded_by = u.id
+         WHERE LOWER(u.email) = LOWER($1) AND a.is_active = true AND a.is_demo = false`,
+        [req.user.email]
       );
 
       if (parseInt(count.rows[0].total) >= plan.maxApps) {
         return res.status(403).json({
           error: 'plan_limit',
-          message: `Your ${plan.name} plan allows up to ${plan.maxApps} apps. Upgrade your subscription for more.`,
+          message: `Your ${plan.name} plan allows up to ${plan.maxApps} apps across all workspaces. Upgrade your subscription for more.`,
           limit: plan.maxApps,
           current: parseInt(count.rows[0].total)
         });
@@ -34,6 +37,40 @@ function enforceAppLimit(req, res, next) {
     } catch (err) {
       console.error('enforceAppLimit error:', err);
       res.status(500).json({ error: 'Failed to check plan limits' });
+    }
+  })();
+}
+
+function enforceWorkspaceLimit(req, res, next) {
+  if (isBypassEnabled()) return next();
+
+  (async () => {
+    try {
+      const userPlan = req.user.plan || 'free';
+      const plan = getPlan(userPlan);
+
+      if (plan.maxWorkspaces === Infinity) return next();
+
+      // Count workspaces where this user (by email) is an admin
+      const count = await pool.query(
+        `SELECT COUNT(*) AS total FROM users
+         WHERE LOWER(email) = LOWER($1) AND role = 'admin' AND is_active = true`,
+        [req.user.email]
+      );
+
+      if (parseInt(count.rows[0].total) >= plan.maxWorkspaces) {
+        return res.status(403).json({
+          error: 'plan_limit',
+          message: `Your ${plan.name} plan allows up to ${plan.maxWorkspaces} workspace${plan.maxWorkspaces === 1 ? '' : 's'}. Upgrade your subscription to create more.`,
+          limit: plan.maxWorkspaces,
+          current: parseInt(count.rows[0].total)
+        });
+      }
+
+      next();
+    } catch (err) {
+      console.error('enforceWorkspaceLimit error:', err);
+      res.status(500).json({ error: 'Failed to check workspace limits' });
     }
   })();
 }
@@ -182,6 +219,7 @@ function checkTokenBudget(req, res, next) {
 module.exports = {
   enforceAppLimit,
   enforceMemberLimit,
+  enforceWorkspaceLimit,
   requirePaidAI,
   requireAppBuilder,
   checkTokenBudget

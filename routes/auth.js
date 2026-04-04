@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
 const { auth } = require('../middleware/auth');
+const { enforceWorkspaceLimit } = require('../middleware/subscription');
 const { getLimits } = require('../config/plans');
 const { seedDemoApps } = require('../config/demoApps');
 const { sendPasswordReset, sendWelcome } = require('../services/email');
@@ -578,7 +579,7 @@ router.post('/switch-workspace', auth, async (req, res) => {
 });
 
 // POST /api/auth/create-workspace — create a new workspace for an existing user
-router.post('/create-workspace', auth, async (req, res) => {
+router.post('/create-workspace', auth, enforceWorkspaceLimit, async (req, res) => {
   const { workspaceName } = req.body;
   if (!workspaceName || !workspaceName.trim()) {
     return res.status(400).json({ error: 'Workspace name is required' });
