@@ -465,6 +465,28 @@ router.get('/:id', auth, validateId, async (req, res) => {
   }
 });
 
+// GET /api/apps/:id/source — download app HTML source
+router.get('/:id/source', auth, validateId, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT a.*, u.email AS uploaded_by_email FROM apps a LEFT JOIN users u ON a.uploaded_by = u.id WHERE a.id = $1 AND a.workspace_id = $2 AND a.is_active = true',
+      [req.params.id, req.user.workspaceId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'App not found' });
+    const app = result.rows[0];
+    if (app.uploaded_by !== req.user.id && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Only the uploader or admin can download source' });
+    }
+    const filename = app.original_filename || `${app.name.replace(/[^a-zA-Z0-9]/g, '_')}.html`;
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(app.file_content);
+  } catch (err) {
+    console.error('Download source error:', err);
+    res.status(500).json({ error: 'Failed to download source' });
+  }
+});
+
 // PUT /api/apps/:id — update metadata
 router.put('/:id', auth, validateId, async (req, res) => {
   const { name, description, icon, visibility, sharedWith } = req.body;
