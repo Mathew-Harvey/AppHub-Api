@@ -205,10 +205,37 @@ function detectFileType(filename) {
     };
   }
 
+  // Reject binary / non-convertible file types
+  const REJECTED_EXTENSIONS = [
+    // Images & media
+    '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.webp', '.svg', '.tiff', '.tif',
+    '.mp3', '.mp4', '.wav', '.avi', '.mov', '.mkv', '.flac', '.ogg', '.webm',
+    // Documents & archives (non-zip)
+    '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.odt', '.ods',
+    '.tar', '.gz', '.rar', '.7z', '.bz2',
+    // Executables & system files
+    '.exe', '.dll', '.so', '.dylib', '.bin', '.dmg', '.iso', '.msi', '.apk', '.ipa',
+    // Fonts
+    '.ttf', '.otf', '.woff', '.woff2', '.eot',
+    // Database & data files
+    '.db', '.sqlite', '.sql', '.csv',
+  ];
+
+  if (REJECTED_EXTENSIONS.includes(ext)) {
+    return {
+      supported: false,
+      rejected: true,
+      extension: ext,
+      detected: `Incompatible file type (${ext})`,
+      message: getRejectMessage(ext)
+    };
+  }
+
+  // Unknown text-like extensions — provide a generic conversion prompt
   return {
     supported: false,
     extension: ext,
-    detected: `Unsupported file type (${ext})`,
+    detected: `Unknown file type (${ext})`,
     conversionPrompt: `I have a ${ext} file that I need converted to a single, self-contained HTML file.
 
 Requirements:
@@ -222,6 +249,37 @@ Requirements:
 
 Here is my file:\n\n`
   };
+}
+
+function getRejectMessage(ext) {
+  const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.webp', '.svg', '.tiff', '.tif'];
+  const mediaExts = ['.mp3', '.mp4', '.wav', '.avi', '.mov', '.mkv', '.flac', '.ogg', '.webm'];
+  const docExts = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.odt', '.ods'];
+  const archiveExts = ['.tar', '.gz', '.rar', '.7z', '.bz2'];
+  const exeExts = ['.exe', '.dll', '.so', '.dylib', '.bin', '.dmg', '.iso', '.msi', '.apk', '.ipa'];
+
+  if (imageExts.includes(ext)) {
+    return 'Image files cannot be converted into an app. If you need images in your app, embed them as Base64 data URIs inside your HTML file.';
+  }
+  if (mediaExts.includes(ext)) {
+    return 'Audio and video files cannot be uploaded. Apps must be self-contained HTML files — media files are too large to embed.';
+  }
+  if (docExts.includes(ext)) {
+    return 'Office documents and PDFs cannot be converted directly. Export or copy the content, then ask an AI to build it as an HTML app.';
+  }
+  if (archiveExts.includes(ext)) {
+    return 'This archive format is not supported. Please use a .zip file instead — we can extract and convert .zip archives.';
+  }
+  if (exeExts.includes(ext)) {
+    return 'Executable and binary files are not supported. Apps must be web-based HTML files.';
+  }
+  if (ext === '.csv') {
+    return 'CSV files cannot be uploaded directly. Paste your data into an AI and ask it to build an interactive HTML table or dashboard.';
+  }
+  if (ext === '.sql' || ext === '.db' || ext === '.sqlite') {
+    return 'Database files are not supported. Export your data as JSON and ask an AI to build an HTML viewer for it.';
+  }
+  return 'This file type is not supported. AppHub works with code files (.html, .jsx, .tsx, .vue, .js, .py, .zip) that can be converted into self-contained HTML apps.';
 }
 
 function validateHtmlContent(content, fileSize) {
