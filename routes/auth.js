@@ -4,7 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
 const { auth } = require('../middleware/auth');
-const { getLimits, getEffectivePlan } = require('../config/plans');
+const { getLimits } = require('../config/plans');
 const { seedDemoApps } = require('../config/demoApps');
 const { sendPasswordReset, sendWelcome } = require('../services/email');
 
@@ -51,10 +51,10 @@ function validatePassword(password) {
 
 async function getUserProfile(userId) {
   const result = await pool.query(
-    `SELECT u.id, u.email, u.display_name, u.role, u.workspace_id,
+    `SELECT u.id, u.email, u.display_name, u.role, u.workspace_id, u.plan AS user_plan,
             w.name AS workspace_name, w.slug AS workspace_slug,
             w.primary_color, w.accent_color,
-            w.primary_color_light, w.accent_color_light, w.plan,
+            w.primary_color_light, w.accent_color_light,
             w.updated_at AS workspace_updated_at,
             CASE WHEN w.logo_data IS NOT NULL THEN true ELSE false END AS has_logo
      FROM users u
@@ -67,8 +67,7 @@ async function getUserProfile(userId) {
 
   const row = result.rows[0];
   const bypassPlan = process.env.DEV_BYPASS_PLAN === 'true';
-  const workspacePlan = bypassPlan ? 'power' : (row.plan || 'free');
-  const effectivePlan = getEffectivePlan(workspacePlan, row.role);
+  const userPlan = bypassPlan ? 'power' : (row.user_plan || 'free');
   const logoVersion = row.workspace_updated_at ? new Date(row.workspace_updated_at).getTime() : '';
   return {
     id: row.id,
@@ -84,9 +83,8 @@ async function getUserProfile(userId) {
       accentColor: row.accent_color,
       primaryColorLight: row.primary_color_light || '#ffffff',
       accentColorLight: row.accent_color_light || '#d63851',
-      plan: effectivePlan,
-      workspacePlan,
-      planLimits: getLimits(effectivePlan)
+      plan: userPlan,
+      planLimits: getLimits(userPlan)
     }
   };
 }
@@ -174,6 +172,7 @@ router.post('/register', async (req, res) => {
     }
 
     // Link pre-paid Stripe subscription from landing page checkout
+    // Link pre-paid Stripe subscription to the new user
     if (stripeSessionId && !inviteCode) {
       const stripe = getStripe();
       if (stripe) {
@@ -183,15 +182,15 @@ router.post('/register', async (req, res) => {
             const sub = await stripe.subscriptions.retrieve(session.subscription);
             const plan = planFromPriceId(sub.items?.data?.[0]?.price?.id);
             await stripe.customers.update(session.customer, {
-              metadata: { workspaceId }
+              metadata: { userId: userResult.rows[0].id }
             });
             await client.query(
-              'UPDATE workspaces SET plan = $1, stripe_customer_id = $2, stripe_subscription_id = $3 WHERE id = $4',
-              [plan, session.customer, session.subscription, workspaceId]
+              'UPDATE users SET plan = $1, stripe_customer_id = $2, stripe_subscription_id = $3 WHERE id = $4',
+              [plan, session.customer, session.subscription, userResult.rows[0].id]
             );
           }
         } catch (stripeErr) {
-          console.error('Stripe session linking failed (workspace created on free tier):', stripeErr.message);
+          console.error('Stripe session linking failed (user created on free tier):', stripeErr.message);
         }
       }
     }

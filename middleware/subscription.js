@@ -1,5 +1,5 @@
 const pool = require('../config/db');
-const { getPlan, getEffectivePlan } = require('../config/plans');
+const { getPlan } = require('../config/plans');
 
 function isBypassEnabled() {
   return process.env.DEV_BYPASS_PLAN === 'true';
@@ -10,33 +10,23 @@ function enforceAppLimit(req, res, next) {
 
   (async () => {
     try {
-      const ws = await pool.query('SELECT plan FROM workspaces WHERE id = $1', [req.user.workspaceId]);
-      if (ws.rows.length === 0) return res.status(404).json({ error: 'Workspace not found' });
-
-      const effectiveKey = getEffectivePlan(ws.rows[0].plan, req.user.role);
-      const plan = getPlan(effectiveKey);
+      const userPlan = req.user.plan || 'free';
+      const plan = getPlan(userPlan);
 
       if (plan.maxApps === Infinity) return next();
 
-      // For members (free tier), count only their own apps
-      const countQuery = req.user.role === 'admin'
-        ? 'SELECT COUNT(*) AS total FROM apps WHERE workspace_id = $1 AND is_active = true AND is_demo = false'
-        : 'SELECT COUNT(*) AS total FROM apps WHERE workspace_id = $1 AND uploaded_by = $2 AND is_active = true AND is_demo = false';
-      const countParams = req.user.role === 'admin'
-        ? [req.user.workspaceId]
-        : [req.user.workspaceId, req.user.id];
-
-      const count = await pool.query(countQuery, countParams);
+      // Count only apps uploaded by this user in this workspace
+      const count = await pool.query(
+        'SELECT COUNT(*) AS total FROM apps WHERE workspace_id = $1 AND uploaded_by = $2 AND is_active = true AND is_demo = false',
+        [req.user.workspaceId, req.user.id]
+      );
 
       if (parseInt(count.rows[0].total) >= plan.maxApps) {
         return res.status(403).json({
           error: 'plan_limit',
-          message: req.user.role === 'admin'
-            ? `Your ${plan.name} plan allows up to ${plan.maxApps} apps. Upgrade for more.`
-            : `Free members can create up to ${plan.maxApps} apps. Ask your workspace admin about upgrading.`,
+          message: `Your ${plan.name} plan allows up to ${plan.maxApps} apps. Upgrade your subscription for more.`,
           limit: plan.maxApps,
-          current: parseInt(count.rows[0].total),
-          upgradeAvailable: req.user.role !== 'admin'
+          current: parseInt(count.rows[0].total)
         });
       }
 
@@ -53,10 +43,9 @@ function enforceMemberLimit(req, res, next) {
 
   (async () => {
     try {
-      const ws = await pool.query('SELECT plan FROM workspaces WHERE id = $1', [req.user.workspaceId]);
-      if (ws.rows.length === 0) return res.status(404).json({ error: 'Workspace not found' });
-
-      const plan = getPlan(ws.rows[0].plan);
+      // Member limits still apply at workspace level based on the inviting user's plan
+      const userPlan = req.user.plan || 'free';
+      const plan = getPlan(userPlan);
 
       if (plan.maxMembers === Infinity) return next();
 
@@ -68,7 +57,7 @@ function enforceMemberLimit(req, res, next) {
       if (parseInt(count.rows[0].total) >= plan.maxMembers) {
         return res.status(403).json({
           error: 'plan_limit',
-          message: `Your ${plan.name} plan allows up to ${plan.maxMembers} team members. Upgrade for more.`,
+          message: `Your ${plan.name} plan allows up to ${plan.maxMembers} team members. Upgrade your subscription for more.`,
           limit: plan.maxMembers,
           current: parseInt(count.rows[0].total)
         });
@@ -84,28 +73,19 @@ function enforceMemberLimit(req, res, next) {
 
 /**
  * Requires a plan with AI conversions enabled (team, business, power).
- * Invited members are treated as free tier — they need to ask admin to upgrade.
  */
 function requirePaidAI(req, res, next) {
   if (isBypassEnabled()) return next();
 
   (async () => {
     try {
-      const ws = await pool.query('SELECT plan FROM workspaces WHERE id = $1', [req.user.workspaceId]);
-      if (ws.rows.length === 0) return res.status(404).json({ error: 'Workspace not found' });
-
-      const effectiveKey = getEffectivePlan(ws.rows[0].plan, req.user.role);
-      const plan = getPlan(effectiveKey);
+      const userPlan = req.user.plan || 'free';
+      const plan = getPlan(userPlan);
       if (!plan.aiConversions) {
-        const isInvitedMember = req.user.role !== 'admin';
         return res.status(403).json({
           error: 'upgrade_required',
-          message: isInvitedMember
-            ? 'AI conversions are available to workspace admins on a Team plan or higher. Contact your workspace admin to upgrade.'
-            : 'This feature requires a Team plan or higher.',
-          currentPlan: effectiveKey,
-          workspacePlan: ws.rows[0].plan,
-          upgradeAvailable: isInvitedMember
+          message: 'This feature requires a Team plan or higher. Upgrade your subscription to access AI conversions.',
+          currentPlan: userPlan
         });
       }
 
@@ -119,29 +99,20 @@ function requirePaidAI(req, res, next) {
 
 /**
  * Requires a plan with the AI App Builder (creator or power).
- * Invited members are treated as free tier.
  */
 function requireAppBuilder(req, res, next) {
   if (isBypassEnabled()) return next();
 
   (async () => {
     try {
-      const ws = await pool.query('SELECT plan FROM workspaces WHERE id = $1', [req.user.workspaceId]);
-      if (ws.rows.length === 0) return res.status(404).json({ error: 'Workspace not found' });
-
-      const effectiveKey = getEffectivePlan(ws.rows[0].plan, req.user.role);
-      const plan = getPlan(effectiveKey);
+      const userPlan = req.user.plan || 'free';
+      const plan = getPlan(userPlan);
       if (!plan.appBuilder) {
-        const isInvitedMember = req.user.role !== 'admin';
         return res.status(403).json({
           error: 'upgrade_required',
-          message: isInvitedMember
-            ? 'AI App Builder is available to workspace admins on a Creator or Pro plan. Contact your workspace admin to upgrade.'
-            : 'AI App Builder requires a Creator or Pro plan.',
-          currentPlan: effectiveKey,
-          workspacePlan: ws.rows[0].plan,
-          requiredPlans: ['business', 'power'],
-          upgradeAvailable: isInvitedMember
+          message: 'AI App Builder requires a Creator or Pro subscription.',
+          currentPlan: userPlan,
+          requiredPlans: ['business', 'power']
         });
       }
 
@@ -156,25 +127,23 @@ function requireAppBuilder(req, res, next) {
 const TOKEN_BUDGET_RESET_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
- * Checks the workspace's monthly builder token budget.
- * Resets the counter if a month has passed. Hard-stops creator users at the cap.
- * Power users (Infinity limit) always pass.
- * Members are already blocked by requireAppBuilder before reaching here.
+ * Checks the user's monthly builder token budget.
+ * Resets the counter if a month has passed.
  */
 function checkTokenBudget(req, res, next) {
   if (isBypassEnabled()) return next();
 
   (async () => {
     try {
-      const ws = await pool.query(
-        'SELECT plan, builder_tokens_used, builder_tokens_reset_at FROM workspaces WHERE id = $1',
-        [req.user.workspaceId]
+      const u = await pool.query(
+        'SELECT plan, builder_tokens_used, builder_tokens_reset_at FROM users WHERE id = $1',
+        [req.user.id]
       );
-      if (ws.rows.length === 0) return res.status(404).json({ error: 'Workspace not found' });
+      if (u.rows.length === 0) return res.status(404).json({ error: 'User not found' });
 
-      const row = ws.rows[0];
-      const effectiveKey = getEffectivePlan(row.plan, req.user.role);
-      const plan = getPlan(effectiveKey);
+      const row = u.rows[0];
+      const userPlan = row.plan || 'free';
+      const plan = getPlan(userPlan);
 
       if (plan.builderTokenLimit === Infinity) return next();
 
@@ -183,8 +152,8 @@ function checkTokenBudget(req, res, next) {
 
       if (now - resetAt > TOKEN_BUDGET_RESET_MS) {
         await pool.query(
-          'UPDATE workspaces SET builder_tokens_used = 0, builder_tokens_reset_at = NOW() WHERE id = $1',
-          [req.user.workspaceId]
+          'UPDATE users SET builder_tokens_used = 0, builder_tokens_reset_at = NOW() WHERE id = $1',
+          [req.user.id]
         );
         req.builderTokensUsed = 0;
         return next();
@@ -194,7 +163,7 @@ function checkTokenBudget(req, res, next) {
       if (used >= plan.builderTokenLimit) {
         return res.status(429).json({
           error: 'token_budget_exceeded',
-          message: `You've used all ${plan.builderTokenLimit.toLocaleString()} AI tokens this month. Upgrade to Power User for unlimited builds.`,
+          message: `You've used all ${plan.builderTokenLimit.toLocaleString()} AI tokens this month. Upgrade to Pro for unlimited builds.`,
           used,
           limit: plan.builderTokenLimit,
           resetAt: new Date(resetAt.getTime() + TOKEN_BUDGET_RESET_MS).toISOString()

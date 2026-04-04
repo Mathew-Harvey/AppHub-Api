@@ -218,6 +218,34 @@ const migrate = async () => {
     await client.query('ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS builder_tokens_used INTEGER DEFAULT 0');
     await client.query('ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS builder_tokens_reset_at TIMESTAMP DEFAULT NOW()');
 
+    // ── User-level subscription columns ──────────────────────────────────
+    // Subscriptions belong to users, not workspaces. Each user has their own plan.
+    await client.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS plan VARCHAR(20) DEFAULT 'free'");
+    await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id VARCHAR(255)');
+    await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_subscription_id VARCHAR(255)');
+    await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_conversions_used INTEGER DEFAULT 0');
+    await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_conversions_reset_at TIMESTAMP DEFAULT NOW()');
+    await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS builder_tokens_used INTEGER DEFAULT 0');
+    await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS builder_tokens_reset_at TIMESTAMP DEFAULT NOW()');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_users_stripe_customer ON users(stripe_customer_id)');
+
+    // Migrate existing workspace-level plans to admin users (one-time)
+    await client.query(`
+      UPDATE users u
+      SET plan = w.plan,
+          stripe_customer_id = w.stripe_customer_id,
+          stripe_subscription_id = w.stripe_subscription_id,
+          ai_conversions_used = w.ai_conversions_used,
+          ai_conversions_reset_at = w.ai_conversions_reset_at,
+          builder_tokens_used = w.builder_tokens_used,
+          builder_tokens_reset_at = w.builder_tokens_reset_at
+      FROM workspaces w
+      WHERE u.workspace_id = w.id
+        AND u.role = 'admin'
+        AND u.plan = 'free'
+        AND w.plan != 'free'
+    `);
+
     // Builder sessions — tracks an app builder conversation across generate/revise cycles
     await client.query(`
       CREATE TABLE IF NOT EXISTS builder_sessions (

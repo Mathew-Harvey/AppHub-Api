@@ -120,7 +120,7 @@ router.post('/convert', auth, requirePaidAI, upload.single('appFile'), async (re
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    const quota = await checkConversionQuota(pool, req.user.workspaceId);
+    const quota = await checkConversionQuota(pool, req.user.id);
     if (!quota.allowed) {
       return res.status(429).json({
         error: 'Monthly conversion limit reached',
@@ -147,7 +147,7 @@ router.post('/convert', auth, requirePaidAI, upload.single('appFile'), async (re
           "UPDATE conversion_jobs SET status = 'done', html = $1 WHERE id = $2",
           [html, jobId]
         );
-        await incrementConversionCount(pool, req.user.workspaceId);
+        await incrementConversionCount(pool, req.user.id);
       })
       .catch(async (err) => {
         console.error('Convert error:', err);

@@ -98,23 +98,23 @@ ${fileContent}
   return html;
 }
 
-// Check and increment conversion count, reset monthly
-async function checkConversionQuota(pool, workspaceId) {
-  const ws = await pool.query(
-    'SELECT ai_conversions_used, ai_conversions_reset_at FROM workspaces WHERE id = $1',
-    [workspaceId]
+// Check and increment conversion count, reset monthly (user-level)
+async function checkConversionQuota(pool, userId) {
+  const u = await pool.query(
+    'SELECT ai_conversions_used, ai_conversions_reset_at FROM users WHERE id = $1',
+    [userId]
   );
-  if (ws.rows.length === 0) return { allowed: false, used: 0, limit: AI_CONVERSIONS_LIMIT };
+  if (u.rows.length === 0) return { allowed: false, used: 0, limit: AI_CONVERSIONS_LIMIT };
 
-  const row = ws.rows[0];
+  const row = u.rows[0];
   const resetAt = new Date(row.ai_conversions_reset_at);
   const now = new Date();
 
   // Reset counter if a month has passed
   if (now - resetAt > 30 * 24 * 60 * 60 * 1000) {
     await pool.query(
-      'UPDATE workspaces SET ai_conversions_used = 0, ai_conversions_reset_at = NOW() WHERE id = $1',
-      [workspaceId]
+      'UPDATE users SET ai_conversions_used = 0, ai_conversions_reset_at = NOW() WHERE id = $1',
+      [userId]
     );
     return { allowed: true, used: 0, limit: AI_CONVERSIONS_LIMIT };
   }
@@ -123,10 +123,10 @@ async function checkConversionQuota(pool, workspaceId) {
   return { allowed: used < AI_CONVERSIONS_LIMIT, used, limit: AI_CONVERSIONS_LIMIT };
 }
 
-async function incrementConversionCount(pool, workspaceId) {
+async function incrementConversionCount(pool, userId) {
   await pool.query(
-    'UPDATE workspaces SET ai_conversions_used = ai_conversions_used + 1 WHERE id = $1',
-    [workspaceId]
+    'UPDATE users SET ai_conversions_used = ai_conversions_used + 1 WHERE id = $1',
+    [userId]
   );
 }
 

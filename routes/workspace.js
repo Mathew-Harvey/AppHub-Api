@@ -22,7 +22,6 @@ const logoUpload = multer({
 });
 
 function formatWorkspace(ws) {
-  const limits = getLimits(ws.plan || 'free');
   const logoVersion = ws.updated_at ? new Date(ws.updated_at).getTime() : '';
   return {
     id: ws.id,
@@ -33,10 +32,6 @@ function formatWorkspace(ws) {
     accentColor: ws.accent_color,
     primaryColorLight: ws.primary_color_light || '#ffffff',
     accentColorLight: ws.accent_color_light || '#d63851',
-    plan: ws.plan || 'free',
-    planLimits: limits,
-    aiConversionsUsed: ws.ai_conversions_used || 0,
-    aiConversionsResetAt: ws.ai_conversions_reset_at
   };
 }
 

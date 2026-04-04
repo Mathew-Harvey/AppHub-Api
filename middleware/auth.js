@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const pool = require('../config/db');
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -12,7 +13,17 @@ function auth(req, res, next) {
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = decoded;
-    next();
+
+    // Enrich with current plan from DB (avoids stale JWT data)
+    pool.query('SELECT plan FROM users WHERE id = $1', [decoded.id])
+      .then(result => {
+        req.user.plan = result.rows[0]?.plan || 'free';
+        next();
+      })
+      .catch(() => {
+        req.user.plan = 'free';
+        next();
+      });
   } catch {
     res.clearCookie('token');
     return res.status(401).json({ error: 'Invalid or expired token' });
