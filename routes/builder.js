@@ -112,7 +112,7 @@ router.post('/sessions', auth, requireAppBuilder, async (req, res) => {
 
     const session = result.rows[0];
     const complexityResult = assessComplexity(session);
-    const usage = await getTokenUsage(req.user.workspaceId);
+    const usage = await getTokenUsage(req.user.id);
 
     res.status(201).json({
       session: formatSession(session),
@@ -200,7 +200,7 @@ router.post('/sessions/:id/generate', auth, requireAppBuilder, checkTokenBudget,
     const jobId = jobResult.rows[0].id;
 
     // Run generation in background — tokens are tracked incrementally by the service
-    buildApp(sess, { jobId, workspaceId: req.user.workspaceId })
+    buildApp(sess, { jobId, userId: req.user.id })
       .then(async (result) => {
         await pool.query(
           `UPDATE builder_jobs SET status = 'done', html = $1, review_notes = $2 WHERE id = $3`,
@@ -268,7 +268,7 @@ router.post('/sessions/:id/revise', auth, requireAppBuilder, checkTokenBudget, b
     );
     const jobId = jobResult.rows[0].id;
 
-    reviseApp(sess.current_html, feedback.trim(), sess, { jobId, workspaceId: req.user.workspaceId })
+    reviseApp(sess.current_html, feedback.trim(), sess, { jobId, userId: req.user.id })
       .then(async (result) => {
         await pool.query(
           `UPDATE builder_jobs SET status = 'done', html = $1, review_notes = $2 WHERE id = $3`,
@@ -453,7 +453,7 @@ router.delete('/sessions/:id', auth, validateId, async (req, res) => {
 
 router.get('/usage', auth, async (req, res) => {
   try {
-    const usage = await getTokenUsage(req.user.workspaceId);
+    const usage = await getTokenUsage(req.user.id);
     if (!usage) return res.status(404).json({ error: 'Workspace not found' });
     res.json(usage);
   } catch (err) {

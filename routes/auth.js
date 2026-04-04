@@ -4,7 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
 const { auth } = require('../middleware/auth');
-const { getLimits, getEffectivePlan } = require('../config/plans');
+const { getLimits } = require('../config/plans');
 const { seedDemoApps } = require('../config/demoApps');
 const { sendPasswordReset, sendWelcome } = require('../services/email');
 
@@ -51,10 +51,10 @@ function validatePassword(password) {
 
 async function getUserProfile(userId) {
   const result = await pool.query(
-    `SELECT u.id, u.email, u.display_name, u.role, u.workspace_id,
+    `SELECT u.id, u.email, u.display_name, u.role, u.workspace_id, u.plan AS user_plan,
             w.name AS workspace_name, w.slug AS workspace_slug,
             w.primary_color, w.accent_color,
-            w.primary_color_light, w.accent_color_light, w.plan,
+            w.primary_color_light, w.accent_color_light,
             w.updated_at AS workspace_updated_at,
             CASE WHEN w.logo_data IS NOT NULL THEN true ELSE false END AS has_logo
      FROM users u
@@ -67,8 +67,7 @@ async function getUserProfile(userId) {
 
   const row = result.rows[0];
   const bypassPlan = process.env.DEV_BYPASS_PLAN === 'true';
-  const workspacePlan = bypassPlan ? 'power' : (row.plan || 'free');
-  const effectivePlan = getEffectivePlan(workspacePlan, row.role);
+  const userPlan = bypassPlan ? 'power' : (row.user_plan || 'free');
   const logoVersion = row.workspace_updated_at ? new Date(row.workspace_updated_at).getTime() : '';
   return {
     id: row.id,
@@ -84,9 +83,8 @@ async function getUserProfile(userId) {
       accentColor: row.accent_color,
       primaryColorLight: row.primary_color_light || '#ffffff',
       accentColorLight: row.accent_color_light || '#d63851',
-      plan: effectivePlan,
-      workspacePlan,
-      planLimits: getLimits(effectivePlan)
+      plan: userPlan,
+      planLimits: getLimits(userPlan)
     }
   };
 }
@@ -174,6 +172,7 @@ router.post('/register', async (req, res) => {
     }
 
     // Link pre-paid Stripe subscription from landing page checkout
+    // Link pre-paid Stripe subscription to the new user
     if (stripeSessionId && !inviteCode) {
       const stripe = getStripe();
       if (stripe) {
@@ -183,15 +182,15 @@ router.post('/register', async (req, res) => {
             const sub = await stripe.subscriptions.retrieve(session.subscription);
             const plan = planFromPriceId(sub.items?.data?.[0]?.price?.id);
             await stripe.customers.update(session.customer, {
-              metadata: { workspaceId }
+              metadata: { userId: userResult.rows[0].id }
             });
             await client.query(
-              'UPDATE workspaces SET plan = $1, stripe_customer_id = $2, stripe_subscription_id = $3 WHERE id = $4',
-              [plan, session.customer, session.subscription, workspaceId]
+              'UPDATE users SET plan = $1, stripe_customer_id = $2, stripe_subscription_id = $3 WHERE id = $4',
+              [plan, session.customer, session.subscription, userResult.rows[0].id]
             );
           }
         } catch (stripeErr) {
-          console.error('Stripe session linking failed (workspace created on free tier):', stripeErr.message);
+          console.error('Stripe session linking failed (user created on free tier):', stripeErr.message);
         }
       }
     }
@@ -514,6 +513,126 @@ router.post('/admin-reset', auth, async (req, res) => {
   } catch (err) {
     console.error('Admin reset error:', err);
     res.status(500).json({ error: 'Failed to generate reset link' });
+  }
+});
+
+// GET /api/auth/workspaces — list all workspaces the current user belongs to
+router.get('/workspaces', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT u.id AS user_id, u.role, w.id AS workspace_id, w.name, w.slug, w.plan,
+              CASE WHEN w.logo_data IS NOT NULL THEN true ELSE false END AS has_logo
+       FROM users u
+       JOIN workspaces w ON u.workspace_id = w.id
+       WHERE u.email = $1 AND u.is_active = true
+       ORDER BY u.role = 'admin' DESC, w.name ASC`,
+      [req.user.email]
+    );
+
+    res.json({
+      workspaces: result.rows.map(r => ({
+        userId: r.user_id,
+        workspaceId: r.workspace_id,
+        name: r.name,
+        slug: r.slug,
+        plan: r.plan,
+        role: r.role,
+        isCurrent: r.workspace_id === req.user.workspaceId,
+        logoUrl: r.has_logo ? `/api/workspace/logo/${r.workspace_id}` : null,
+      }))
+    });
+  } catch (err) {
+    console.error('List workspaces error:', err);
+    res.status(500).json({ error: 'Failed to list workspaces' });
+  }
+});
+
+// POST /api/auth/switch-workspace — switch to a different workspace
+router.post('/switch-workspace', auth, async (req, res) => {
+  const { workspaceId } = req.body;
+  if (!workspaceId) return res.status(400).json({ error: 'workspaceId is required' });
+
+  try {
+    // Verify the user has an account in the target workspace
+    const result = await pool.query(
+      `SELECT u.id, u.email, u.role, u.workspace_id
+       FROM users u
+       WHERE u.email = $1 AND u.workspace_id = $2 AND u.is_active = true`,
+      [req.user.email, workspaceId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(403).json({ error: 'You do not have access to this workspace' });
+    }
+
+    const targetUser = result.rows[0];
+    const token = signToken(targetUser);
+    const profile = await getUserProfile(targetUser.id);
+
+    res.cookie('token', token, getCookieOptions());
+    res.json({ user: profile });
+  } catch (err) {
+    console.error('Switch workspace error:', err);
+    res.status(500).json({ error: 'Failed to switch workspace' });
+  }
+});
+
+// POST /api/auth/create-workspace — create a new workspace for an existing user
+router.post('/create-workspace', auth, async (req, res) => {
+  const { workspaceName } = req.body;
+  if (!workspaceName || !workspaceName.trim()) {
+    return res.status(400).json({ error: 'Workspace name is required' });
+  }
+  if (workspaceName.length > 100) {
+    return res.status(400).json({ error: 'Workspace name must be 100 characters or less' });
+  }
+
+  const cleanName = workspaceName.trim();
+  const slug = cleanName.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const existing = await client.query('SELECT id FROM workspaces WHERE slug = $1', [slug]);
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ error: 'A workspace with a similar name already exists' });
+    }
+
+    const wsResult = await client.query(
+      'INSERT INTO workspaces (name, slug) VALUES ($1, $2) RETURNING id',
+      [cleanName, slug]
+    );
+    const newWorkspaceId = wsResult.rows[0].id;
+
+    // Create a new user record in the new workspace
+    const existingUser = await client.query(
+      'SELECT password_hash, display_name FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    const { password_hash, display_name } = existingUser.rows[0];
+
+    const userResult = await client.query(
+      'INSERT INTO users (workspace_id, email, password_hash, display_name, role) VALUES ($1, $2, $3, $4, $5) RETURNING id, email, display_name, role, workspace_id',
+      [newWorkspaceId, req.user.email, password_hash, display_name, 'admin']
+    );
+
+    await seedDemoApps(client, newWorkspaceId, userResult.rows[0].id);
+
+    await client.query('COMMIT');
+
+    const newUser = userResult.rows[0];
+    const token = signToken(newUser);
+    const profile = await getUserProfile(newUser.id);
+
+    res.cookie('token', token, getCookieOptions());
+    res.status(201).json({ user: profile });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Create workspace error:', err);
+    res.status(500).json({ error: 'Failed to create workspace' });
+  } finally {
+    client.release();
   }
 });
 

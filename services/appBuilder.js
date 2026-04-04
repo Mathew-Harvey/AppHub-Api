@@ -190,12 +190,12 @@ Edit the existing code to fix ONLY these issues. Do NOT rewrite from scratch. Ou
  * @param {object} session - DB row from builder_sessions
  * @param {object} opts
  * @param {string} opts.jobId - builder_jobs row id
- * @param {string} opts.workspaceId - workspace id for token tracking
+ * @param {string} opts.userId - user id for token tracking
  */
-async function buildApp(session, { jobId, workspaceId } = {}) {
+async function buildApp(session, { jobId, userId } = {}) {
   const userPrompt = buildUserPrompt(session);
 
-  const onTokens = jobId ? makeTokenTracker(jobId, workspaceId, session.id) : null;
+  const onTokens = jobId ? makeTokenTracker(jobId, userId, session.id) : null;
 
   // Step 1: Generate the app
   const genResult = await callWithCache(SYSTEM_PROMPT, [
@@ -243,10 +243,10 @@ async function buildApp(session, { jobId, workspaceId } = {}) {
 
 // ─── Revision flow ───────────────────────────────────────────────────────────
 
-async function reviseApp(existingHtml, userFeedback, session, { jobId, workspaceId } = {}) {
+async function reviseApp(existingHtml, userFeedback, session, { jobId, userId } = {}) {
   const revisionPrompt = buildRevisionPrompt(userFeedback);
 
-  const onTokens = jobId ? makeTokenTracker(jobId, workspaceId, session.id) : null;
+  const onTokens = jobId ? makeTokenTracker(jobId, userId, session.id) : null;
 
   const genResult = await callWithCache(SYSTEM_PROMPT, [
     { text: existingHtml, cache: true },
@@ -283,7 +283,7 @@ async function reviseApp(existingHtml, userFeedback, session, { jobId, workspace
  * Returns a callback that updates the DB after each LLM call.
  * Updates both the builder_jobs row (for polling) and the workspace budget.
  */
-function makeTokenTracker(jobId, workspaceId, sessionId) {
+function makeTokenTracker(jobId, userId, sessionId) {
   return async function onTokens(result) {
     const { inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens } = result;
 
@@ -297,8 +297,8 @@ function makeTokenTracker(jobId, workspaceId, sessionId) {
           [inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, jobId]
         ),
         pool.query(
-          'UPDATE workspaces SET builder_tokens_used = builder_tokens_used + $1 WHERE id = $2',
-          [outputTokens, workspaceId]
+          'UPDATE users SET builder_tokens_used = builder_tokens_used + $1 WHERE id = $2',
+          [outputTokens, userId]
         ),
         pool.query(
           'UPDATE builder_sessions SET total_tokens_used = total_tokens_used + $1 WHERE id = $2',
@@ -313,15 +313,15 @@ function makeTokenTracker(jobId, workspaceId, sessionId) {
 
 // ─── Token budget helpers ────────────────────────────────────────────────────
 
-async function getTokenUsage(workspaceId) {
-  const ws = await pool.query(
-    'SELECT plan, builder_tokens_used, builder_tokens_reset_at FROM workspaces WHERE id = $1',
-    [workspaceId]
+async function getTokenUsage(userId) {
+  const u = await pool.query(
+    'SELECT plan, builder_tokens_used, builder_tokens_reset_at FROM users WHERE id = $1',
+    [userId]
   );
-  if (ws.rows.length === 0) return null;
+  if (u.rows.length === 0) return null;
 
-  const row = ws.rows[0];
-  const effectivePlan = process.env.DEV_BYPASS_PLAN === 'true' ? 'power' : row.plan;
+  const row = u.rows[0];
+  const effectivePlan = process.env.DEV_BYPASS_PLAN === 'true' ? 'power' : (row.plan || 'free');
   const plan = getPlan(effectivePlan);
   const resetAt = new Date(row.builder_tokens_reset_at);
   const now = new Date();
@@ -330,8 +330,8 @@ async function getTokenUsage(workspaceId) {
 
   if (now - resetAt > TOKEN_BUDGET_RESET_MS) {
     await pool.query(
-      'UPDATE workspaces SET builder_tokens_used = 0, builder_tokens_reset_at = NOW() WHERE id = $1',
-      [workspaceId]
+      'UPDATE users SET builder_tokens_used = 0, builder_tokens_reset_at = NOW() WHERE id = $1',
+      [userId]
     );
     used = 0;
   }
