@@ -109,6 +109,7 @@ router.get('/checkout-landing', async (req, res) => {
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
       line_items: [{ price: priceId, quantity: 1 }],
+      allow_promotion_codes: true,
       success_url: `${clientUrl}/register?stripe_session={CHECKOUT_SESSION_ID}`,
       cancel_url: `${landingUrl}/#pricing`,
       metadata: { plan }
@@ -184,7 +185,8 @@ router.post('/checkout', auth, adminOnly, async (req, res) => {
       customer: customerId,
       mode: 'subscription',
       line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${clientUrl}/settings?upgraded=true`,
+      allow_promotion_codes: true,
+      success_url: `${clientUrl}/settings?upgraded=${planKey || 'true'}`,
       cancel_url: `${clientUrl}/settings?cancelled=true`,
       metadata: { workspaceId: req.user.workspaceId }
     });
@@ -252,6 +254,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         const session = event.data.object;
         const workspaceId = session.metadata?.workspaceId;
         if (workspaceId && session.subscription) {
+          // Standard checkout flow — workspaceId is in metadata
           const sub = await stripe.subscriptions.retrieve(session.subscription);
           const plan = planFromPriceId(extractPriceId(sub));
           await pool.query(
@@ -259,6 +262,34 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
             [plan, session.subscription, workspaceId]
           );
           console.log(`Workspace ${workspaceId} upgraded to ${plan}`);
+        } else if (!workspaceId && session.subscription && session.customer_details?.email) {
+          // Buy Button / external checkout — no workspaceId, match by email
+          const email = session.customer_details.email.toLowerCase().trim();
+          const sub = await stripe.subscriptions.retrieve(session.subscription);
+          const plan = planFromPriceId(extractPriceId(sub));
+
+          const ws = await pool.query(
+            `SELECT w.id FROM workspaces w
+             JOIN users u ON u.workspace_id = w.id
+             WHERE LOWER(u.email) = $1 AND u.role = 'admin' AND u.is_active = true
+             LIMIT 1`,
+            [email]
+          );
+
+          if (ws.rows.length > 0) {
+            const wsId = ws.rows[0].id;
+            await pool.query(
+              `UPDATE workspaces SET plan = $1, stripe_customer_id = $2, stripe_subscription_id = $3, updated_at = NOW() WHERE id = $4`,
+              [plan, session.customer, session.subscription, wsId]
+            );
+            // Sync workspace ID to Stripe customer metadata for future events
+            await stripe.customers.update(session.customer, {
+              metadata: { workspaceId: wsId }
+            });
+            console.log(`Workspace ${wsId} upgraded to ${plan} via email match (${email})`);
+          } else {
+            console.warn(`Buy Button checkout: no workspace found for email ${email}`);
+          }
         }
         break;
       }
