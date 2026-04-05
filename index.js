@@ -21,6 +21,7 @@ const subscriptionRoutes = require('./routes/subscription');
 const convertRoutes = require('./routes/convert');
 const builderRoutes = require('./routes/builder');
 const superAdminRoutes = require('./routes/superAdmin');
+const marketplaceRoutes = require('./routes/marketplace');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -122,6 +123,7 @@ app.use('/api/subscription', apiLimiter, subscriptionRoutes);
 app.use('/api/convert', convertRoutes);
 app.use('/api/builder', apiLimiter, builderRoutes);
 app.use('/api/super-admin', superAdminRoutes);
+app.use('/api/marketplace', apiLimiter, marketplaceRoutes);
 app.use('/sandbox', sandboxRoutes);
 
 // Serve the converter frontend
