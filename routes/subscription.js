@@ -149,7 +149,7 @@ router.post('/checkout', auth, async (req, res) => {
 
   try {
     const u = await pool.query(
-      'SELECT id, email, display_name, stripe_customer_id FROM users WHERE id = $1',
+      'SELECT id, email, display_name, stripe_customer_id, stripe_subscription_id FROM users WHERE id = $1',
       [req.user.id]
     );
     if (u.rows.length === 0) return res.status(404).json({ error: 'User not found' });
@@ -164,6 +164,18 @@ router.post('/checkout', auth, async (req, res) => {
       });
       customerId = customer.id;
       await pool.query('UPDATE users SET stripe_customer_id = $1 WHERE id = $2', [customerId, req.user.id]);
+    }
+
+    // Cancel existing subscription before creating a new one
+    const existingSubId = u.rows[0].stripe_subscription_id;
+    if (existingSubId) {
+      try {
+        await stripe.subscriptions.cancel(existingSubId, { prorate: true });
+        console.log(`Cancelled existing subscription ${existingSubId} for user ${req.user.id}`);
+      } catch (cancelErr) {
+        // Subscription may already be cancelled or invalid — log and continue
+        console.warn(`Could not cancel subscription ${existingSubId}:`, cancelErr.message);
+      }
     }
 
     const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
@@ -243,6 +255,21 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
 
         if (userId && session.subscription) {
           // Authenticated checkout — userId is in metadata
+          // Cancel any other active subscriptions on this customer
+          if (session.customer) {
+            try {
+              const existing = await stripe.subscriptions.list({ customer: session.customer, status: 'active', limit: 100 });
+              for (const oldSub of existing.data) {
+                if (oldSub.id !== session.subscription) {
+                  await stripe.subscriptions.cancel(oldSub.id, { prorate: true });
+                  console.log(`Webhook: cancelled old subscription ${oldSub.id} for customer ${session.customer}`);
+                }
+              }
+            } catch (cleanupErr) {
+              console.warn('Webhook: failed to clean up old subscriptions:', cleanupErr.message);
+            }
+          }
+
           const sub = await stripe.subscriptions.retrieve(session.subscription);
           const plan = planFromPriceId(extractPriceId(sub));
           await pool.query(
@@ -253,6 +280,22 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         } else if (session.subscription && session.customer_details?.email) {
           // External checkout (Buy Button / landing) — match by email
           const email = session.customer_details.email.toLowerCase().trim();
+
+          // Cancel any other active subscriptions on this customer
+          if (session.customer) {
+            try {
+              const existing = await stripe.subscriptions.list({ customer: session.customer, status: 'active', limit: 100 });
+              for (const oldSub of existing.data) {
+                if (oldSub.id !== session.subscription) {
+                  await stripe.subscriptions.cancel(oldSub.id, { prorate: true });
+                  console.log(`Webhook: cancelled old subscription ${oldSub.id} for customer ${session.customer}`);
+                }
+              }
+            } catch (cleanupErr) {
+              console.warn('Webhook: failed to clean up old subscriptions:', cleanupErr.message);
+            }
+          }
+
           const sub = await stripe.subscriptions.retrieve(session.subscription);
           const plan = planFromPriceId(extractPriceId(sub));
 
