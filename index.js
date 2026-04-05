@@ -1,4 +1,9 @@
 require('dotenv').config();
+
+// Install log capture early so all console output is buffered
+const { install: installLogCapture, morganStream } = require('./services/logCapture');
+installLogCapture();
+
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
@@ -15,6 +20,7 @@ const sandboxRoutes = require('./routes/sandbox');
 const subscriptionRoutes = require('./routes/subscription');
 const convertRoutes = require('./routes/convert');
 const builderRoutes = require('./routes/builder');
+const superAdminRoutes = require('./routes/superAdmin');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -65,9 +71,9 @@ app.use(cors({
 
 app.use(cookieParser());
 
-// Request logging (skip in test)
+// Request logging (skip in test) — pipe through logCapture stream
 if (process.env.NODE_ENV !== 'test') {
-  app.use(morgan('short'));
+  app.use(morgan('short', { stream: morganStream }));
 }
 
 // Stripe webhook needs the raw body — skip JSON parsing for that route
@@ -115,6 +121,7 @@ app.use('/api/workspace', apiLimiter, workspaceRoutes);
 app.use('/api/subscription', apiLimiter, subscriptionRoutes);
 app.use('/api/convert', convertRoutes);
 app.use('/api/builder', apiLimiter, builderRoutes);
+app.use('/api/super-admin', superAdminRoutes);
 app.use('/sandbox', sandboxRoutes);
 
 // Serve the converter frontend
