@@ -40,6 +40,11 @@ function formatApp(row) {
     fileSize: row.file_size,
     uploadedBy: row.uploaded_by_name || null,
     uploadedByEmail: row.uploaded_by_email || null,
+    marketplaceCategory: row.marketplace_category || null,
+    marketplaceTags: row.marketplace_tags || [],
+    installCount: row.install_count || 0,
+    publishedAt: row.published_at || null,
+    sourceAppId: row.source_app_id || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -415,6 +420,7 @@ router.get('/', auth, async (req, res) => {
          AND a.pending_delete = false
          AND (
            a.visibility = 'team'
+           OR a.visibility = 'public'
            OR (a.visibility = 'private' AND a.uploaded_by = $2)
            OR (a.visibility = 'specific' AND s.user_id IS NOT NULL)
            OR a.uploaded_by = $2
@@ -489,7 +495,7 @@ router.get('/:id/source', auth, validateId, async (req, res) => {
 
 // PUT /api/apps/:id — update metadata
 router.put('/:id', auth, validateId, async (req, res) => {
-  const { name, description, icon, visibility, sharedWith } = req.body;
+  const { name, description, icon, visibility, sharedWith, marketplaceCategory, marketplaceTags } = req.body;
   if (name && name.length > 100) {
     return res.status(400).json({ error: 'App name must be 100 characters or less' });
   }
@@ -511,6 +517,22 @@ router.put('/:id', auth, validateId, async (req, res) => {
          icon = COALESCE($3, icon), visibility = COALESCE($4, visibility), updated_at = NOW() WHERE id = $5`,
         [name?.trim() || null, description?.trim(), icon, visibility, req.params.id]
       );
+
+      // Handle marketplace metadata when visibility is public
+      if (visibility === 'public') {
+        // Set published_at if not already set
+        await client.query(
+          'UPDATE apps SET published_at = COALESCE(published_at, NOW()) WHERE id = $1',
+          [req.params.id]
+        );
+        if (marketplaceCategory !== undefined) {
+          await client.query('UPDATE apps SET marketplace_category = $1 WHERE id = $2', [marketplaceCategory, req.params.id]);
+        }
+        if (marketplaceTags !== undefined) {
+          await client.query('UPDATE apps SET marketplace_tags = $1 WHERE id = $2', [marketplaceTags, req.params.id]);
+        }
+      }
+
       if (visibility === 'specific' && sharedWith) {
         await client.query('DELETE FROM app_shares WHERE app_id = $1', [req.params.id]);
         for (const userId of sharedWith) {

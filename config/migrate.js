@@ -294,6 +294,58 @@ const migrate = async () => {
     await client.query('CREATE INDEX IF NOT EXISTS idx_builder_jobs_session ON builder_jobs(session_id)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_builder_jobs_created ON builder_jobs(created_at)');
 
+    // ── Marketplace: expand visibility to include 'public' ─────────────
+    await client.query(`
+      DO $$ BEGIN
+        ALTER TABLE apps DROP CONSTRAINT IF EXISTS apps_visibility_check;
+        ALTER TABLE apps ADD CONSTRAINT apps_visibility_check
+          CHECK (visibility IN ('private', 'team', 'specific', 'public'));
+      END $$
+    `);
+
+    // Marketplace metadata on apps
+    await client.query("ALTER TABLE apps ADD COLUMN IF NOT EXISTS marketplace_category VARCHAR(50)");
+    await client.query("ALTER TABLE apps ADD COLUMN IF NOT EXISTS marketplace_tags TEXT[] DEFAULT '{}'");
+    await client.query("ALTER TABLE apps ADD COLUMN IF NOT EXISTS install_count INTEGER DEFAULT 0");
+    await client.query("ALTER TABLE apps ADD COLUMN IF NOT EXISTS published_at TIMESTAMP");
+    await client.query("ALTER TABLE apps ADD COLUMN IF NOT EXISTS source_app_id UUID");
+
+    // Marketplace categories reference table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS marketplace_categories (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        name VARCHAR(50) UNIQUE NOT NULL,
+        icon VARCHAR(10) DEFAULT '📂',
+        sort_order INTEGER DEFAULT 0
+      )
+    `);
+
+    // Seed default categories (idempotent via ON CONFLICT)
+    const defaultCategories = [
+      { name: 'Productivity', icon: '⚡', order: 0 },
+      { name: 'Games', icon: '🎮', order: 1 },
+      { name: 'Utilities', icon: '🔧', order: 2 },
+      { name: 'Business', icon: '💼', order: 3 },
+      { name: 'Education', icon: '📚', order: 4 },
+      { name: 'Design', icon: '🎨', order: 5 },
+      { name: 'Data', icon: '📊', order: 6 },
+      { name: 'Finance', icon: '💰', order: 7 },
+      { name: 'Health', icon: '🏥', order: 8 },
+      { name: 'Other', icon: '📦', order: 9 },
+    ];
+    for (const cat of defaultCategories) {
+      await client.query(
+        'INSERT INTO marketplace_categories (name, icon, sort_order) VALUES ($1, $2, $3) ON CONFLICT (name) DO NOTHING',
+        [cat.name, cat.icon, cat.order]
+      );
+    }
+
+    // Marketplace indexes
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_apps_marketplace_public ON apps(visibility, is_active, pending_delete) WHERE visibility = 'public' AND is_active = true AND pending_delete = false`);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_apps_marketplace_category ON apps(marketplace_category)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_apps_install_count ON apps(install_count DESC)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_apps_source_app ON apps(source_app_id)');
+
     await client.query('COMMIT');
     console.log('Database migration completed successfully');
   } catch (err) {
