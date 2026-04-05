@@ -521,7 +521,7 @@ router.post('/admin-reset', auth, async (req, res) => {
 router.get('/workspaces', auth, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT u.id AS user_id, u.role, w.id AS workspace_id, w.name, w.slug, w.plan,
+      `SELECT u.id AS user_id, u.role, u.plan, w.id AS workspace_id, w.name, w.slug,
               CASE WHEN w.logo_data IS NOT NULL THEN true ELSE false END AS has_logo
        FROM users u
        JOIN workspaces w ON u.workspace_id = w.id
