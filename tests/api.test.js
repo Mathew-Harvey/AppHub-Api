@@ -2016,3 +2016,187 @@ describe('GET /api/subscription/status (plan limits)', () => {
     await pool.query("UPDATE users SET plan = 'free' WHERE email = 'admin@test.com'");
   });
 });
+
+// ─── Workspace list & switch ───────────────────────────────────────────────
+
+describe('GET /api/auth/workspaces', () => {
+  it('rejects unauthenticated', async () => {
+    const res = await request(app).get('/api/auth/workspaces');
+    expect(res.status).toBe(401);
+  });
+
+  it('lists workspaces for authenticated user', async () => {
+    const res = await request(app)
+      .get('/api/auth/workspaces')
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.workspaces)).toBe(true);
+    expect(res.body.workspaces.length).toBeGreaterThanOrEqual(1);
+    const current = res.body.workspaces.find(w => w.isCurrent);
+    expect(current).toBeDefined();
+    expect(current.name).toBeDefined();
+    expect(current.role).toBe('admin');
+    expect(current.plan).toBeDefined();
+  });
+});
+
+describe('POST /api/auth/switch-workspace', () => {
+  it('rejects unauthenticated', async () => {
+    const res = await request(app)
+      .post('/api/auth/switch-workspace')
+      .send({ workspaceId: workspaceId });
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects missing workspaceId', async () => {
+    const res = await request(app)
+      .post('/api/auth/switch-workspace')
+      .set('Cookie', adminCookie)
+      .send({});
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects workspace user does not belong to', async () => {
+    const res = await request(app)
+      .post('/api/auth/switch-workspace')
+      .set('Cookie', adminCookie)
+      .send({ workspaceId: '00000000-0000-0000-0000-000000000000' });
+    expect(res.status).toBe(403);
+  });
+
+  it('switches to own workspace', async () => {
+    const res = await request(app)
+      .post('/api/auth/switch-workspace')
+      .set('Cookie', adminCookie)
+      .send({ workspaceId: workspaceId });
+    expect(res.status).toBe(200);
+    expect(res.body.user).toBeDefined();
+    adminCookie = res.headers['set-cookie'] || adminCookie;
+  });
+});
+
+// ─── App source download ───────────────────────────────────────────────────
+
+describe('GET /api/apps/:id/source', () => {
+  it('rejects unauthenticated', async () => {
+    const res = await request(app).get(`/api/apps/${appId}/source`);
+    expect(res.status).toBe(401);
+  });
+
+  it('downloads app source HTML', async () => {
+    const res = await request(app)
+      .get(`/api/apps/${appId}/source`)
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toMatch(/text\/html/);
+    expect(res.headers['content-disposition']).toBeDefined();
+  });
+
+  it('returns 404 for non-existent app', async () => {
+    const res = await request(app)
+      .get('/api/apps/00000000-0000-0000-0000-000000000000/source')
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(404);
+  });
+});
+
+// ─── Workspace logo ────────────────────────────────────────────────────────
+
+describe('Workspace logo endpoints', () => {
+  it('GET /api/workspace/logo returns 404 when no logo set', async () => {
+    const res = await request(app)
+      .get('/api/workspace/logo')
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(404);
+  });
+
+  it('POST /api/workspace/logo rejects unauthenticated', async () => {
+    const res = await request(app)
+      .post('/api/workspace/logo');
+    expect(res.status).toBe(401);
+  });
+
+  it('POST /api/workspace/logo rejects non-admin', async () => {
+    const res = await request(app)
+      .post('/api/workspace/logo')
+      .set('Cookie', memberCookie)
+      .attach('logo', Buffer.from('fake-image-data'), 'logo.png');
+    expect(res.status).toBe(403);
+  });
+});
+
+// ─── Subscription checkout & portal ────────────────────────────────────────
+
+describe('POST /api/subscription/checkout', () => {
+  it('rejects unauthenticated', async () => {
+    const res = await request(app)
+      .post('/api/subscription/checkout')
+      .send({ planKey: 'team' });
+    expect(res.status).toBe(401);
+  });
+
+  it('returns error when Stripe is not configured', async () => {
+    const res = await request(app)
+      .post('/api/subscription/checkout')
+      .set('Cookie', adminCookie)
+      .send({ planKey: 'team' });
+    expect(res.status).toBe(500);
+    expect(res.body.error).toMatch(/billing|configured/i);
+  });
+});
+
+describe('POST /api/subscription/portal', () => {
+  it('rejects unauthenticated', async () => {
+    const res = await request(app)
+      .post('/api/subscription/portal');
+    expect(res.status).toBe(401);
+  });
+
+  it('returns error when Stripe is not configured', async () => {
+    const res = await request(app)
+      .post('/api/subscription/portal')
+      .set('Cookie', adminCookie);
+    expect([400, 500]).toContain(res.status);
+  });
+});
+
+// ─── Builder generate ──────────────────────────────────────────────────────
+
+describe('POST /api/builder/sessions/:id/generate', () => {
+  let tempSessionId;
+
+  beforeAll(async () => {
+    await pool.query("UPDATE users SET plan = 'power' WHERE email = 'admin@test.com'");
+    const res = await request(app)
+      .post('/api/builder/sessions')
+      .set('Cookie', adminCookie)
+      .send({ name: 'Generate Test Session' });
+    tempSessionId = res.body.session?.id;
+  });
+
+  afterAll(async () => {
+    if (tempSessionId) {
+      await request(app)
+        .delete(`/api/builder/sessions/${tempSessionId}`)
+        .set('Cookie', adminCookie);
+    }
+    await pool.query("UPDATE users SET plan = 'free' WHERE email = 'admin@test.com'");
+  });
+
+  it('rejects unauthenticated', async () => {
+    const fakeId = tempSessionId || '00000000-0000-0000-0000-000000000000';
+    const res = await request(app)
+      .post(`/api/builder/sessions/${fakeId}/generate`);
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects free plan user', async () => {
+    await pool.query("UPDATE users SET plan = 'free' WHERE email = 'admin@test.com'");
+    const fakeId = tempSessionId || '00000000-0000-0000-0000-000000000000';
+    const res = await request(app)
+      .post(`/api/builder/sessions/${fakeId}/generate`)
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(403);
+    await pool.query("UPDATE users SET plan = 'power' WHERE email = 'admin@test.com'");
+  });
+});
