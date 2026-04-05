@@ -3,7 +3,8 @@ const AdmZip = require('adm-zip');
 const cheerio = require('cheerio');
 const path = require('path');
 
-const AI_CONVERSIONS_LIMIT = 50; // per month per workspace
+const { getPlan } = require('../config/plans');
+const AI_CONVERSIONS_LIMIT_FALLBACK = 50; // fallback if plan lookup fails
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // Extract readable content from a ZIP buffer
@@ -101,12 +102,18 @@ ${fileContent}
 // Check and increment conversion count, reset monthly (user-level)
 async function checkConversionQuota(pool, userId) {
   const u = await pool.query(
-    'SELECT ai_conversions_used, ai_conversions_reset_at FROM users WHERE id = $1',
+    'SELECT plan, ai_conversions_used, ai_conversions_reset_at FROM users WHERE id = $1',
     [userId]
   );
-  if (u.rows.length === 0) return { allowed: false, used: 0, limit: AI_CONVERSIONS_LIMIT };
+  if (u.rows.length === 0) return { allowed: false, used: 0, limit: 0 };
 
   const row = u.rows[0];
+  const planDef = getPlan(row.plan || 'free');
+  const limit = planDef.aiConversionsLimit === Infinity ? Infinity : (planDef.aiConversionsLimit || AI_CONVERSIONS_LIMIT_FALLBACK);
+
+  // Unlimited conversions for business/power plans
+  if (limit === Infinity) return { allowed: true, used: row.ai_conversions_used || 0, limit: null };
+
   const resetAt = new Date(row.ai_conversions_reset_at);
   const now = new Date();
 
@@ -116,11 +123,11 @@ async function checkConversionQuota(pool, userId) {
       'UPDATE users SET ai_conversions_used = 0, ai_conversions_reset_at = NOW() WHERE id = $1',
       [userId]
     );
-    return { allowed: true, used: 0, limit: AI_CONVERSIONS_LIMIT };
+    return { allowed: true, used: 0, limit };
   }
 
   const used = row.ai_conversions_used || 0;
-  return { allowed: used < AI_CONVERSIONS_LIMIT, used, limit: AI_CONVERSIONS_LIMIT };
+  return { allowed: used < limit, used, limit };
 }
 
 async function incrementConversionCount(pool, userId) {

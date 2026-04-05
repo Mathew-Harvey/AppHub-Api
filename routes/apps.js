@@ -321,9 +321,9 @@ router.post('/upload', auth, uploadLimiter, enforceAppLimit, upload.single('appF
     let fixedErrors = [];
 
     if (blockingErrors.length > 0) {
-      const ws = await pool.query('SELECT plan FROM workspaces WHERE id = $1', [req.user.workspaceId]);
-      const planKey = ws.rows[0]?.plan || 'free';
-      const planDef = getPlan(planKey);
+      // Use the user's own plan (not workspace plan) since plans are per-user
+      const userPlan = req.user.plan || 'free';
+      const planDef = getPlan(userPlan);
       const bypassPlan = process.env.DEV_BYPASS_PLAN === 'true';
 
       if (!planDef.aiConversions && !bypassPlan) {
@@ -558,9 +558,8 @@ router.put('/:id/file', auth, validateId, upload.single('appFile'), async (req, 
     let fixedErrors = [];
 
     if (blockingErrors.length > 0) {
-      const ws = await pool.query('SELECT plan FROM workspaces WHERE id = $1', [req.user.workspaceId]);
-      const planKey = ws.rows[0]?.plan || 'free';
-      const planDef = getPlan(planKey);
+      const userPlan = req.user.plan || 'free';
+      const planDef = getPlan(userPlan);
       const bypassPlan = process.env.DEV_BYPASS_PLAN === 'true';
 
       if (!planDef.aiConversions && !bypassPlan) {

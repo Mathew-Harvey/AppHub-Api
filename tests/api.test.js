@@ -592,7 +592,7 @@ describe('POST /api/apps/convert', () => {
 
   it('rejects when rate limit exceeded (team plan)', async () => {
     // Temporarily set plan to team and max out conversions
-    await pool.query("UPDATE workspaces SET plan = 'team', ai_conversions_used = 999 WHERE slug = 'test-workspace'");
+    await pool.query("UPDATE users SET plan = 'team', ai_conversions_used = 999 WHERE email = 'admin@test.com'");
 
     const res = await request(app)
       .post('/api/apps/convert')
@@ -602,7 +602,7 @@ describe('POST /api/apps/convert', () => {
     expect(res.body.error).toMatch(/limit/i);
 
     // Reset
-    await pool.query("UPDATE workspaces SET plan = 'free', ai_conversions_used = 0 WHERE slug = 'test-workspace'");
+    await pool.query("UPDATE users SET plan = 'free', ai_conversions_used = 0 WHERE email = 'admin@test.com'");
   });
 
   it('poll endpoint returns 404 for unknown job', async () => {
@@ -1603,7 +1603,7 @@ describe('Builder API', () => {
 
     it('creates session on paid plan', async () => {
       // Upgrade workspace to power plan for builder access
-      await pool.query("UPDATE workspaces SET plan = 'power' WHERE slug = 'test-workspace'");
+      await pool.query("UPDATE users SET plan = 'power' WHERE email = 'admin@test.com'");
 
       const res = await request(app)
         .post('/api/builder/sessions')
@@ -1746,7 +1746,7 @@ describe('Builder API', () => {
 
   afterAll(async () => {
     // Restore free plan
-    await pool.query("UPDATE workspaces SET plan = 'free' WHERE slug = 'test-workspace'");
+    await pool.query("UPDATE users SET plan = 'free' WHERE email = 'admin@test.com'");
   });
 });
 
@@ -1764,84 +1764,74 @@ describe('Per-user permission model', () => {
     permMemberCookie = login.headers['set-cookie'];
   });
 
-  describe('Member gets free tier even when workspace is on paid plan', () => {
+  describe('Plans are per-user: admin on power, member on free', () => {
     beforeAll(async () => {
-      await pool.query("UPDATE workspaces SET plan = 'power' WHERE slug = 'test-workspace'");
+      await pool.query("UPDATE users SET plan = 'power' WHERE email = 'admin@test.com'");
     });
 
     afterAll(async () => {
-      await pool.query("UPDATE workspaces SET plan = 'free' WHERE slug = 'test-workspace'");
+      await pool.query("UPDATE users SET plan = 'free' WHERE email = 'admin@test.com'");
     });
 
-    it('admin /me returns workspace plan', async () => {
+    it('admin /me returns their own plan (power)', async () => {
       const res = await request(app)
         .get('/api/auth/me')
         .set('Cookie', adminCookie);
       expect(res.status).toBe(200);
       expect(res.body.user.workspace.plan).toBe('power');
-      expect(res.body.user.workspace.workspacePlan).toBe('power');
     });
 
-    it('member /me returns free effective plan with workspacePlan', async () => {
+    it('member /me returns their own plan (free)', async () => {
       const res = await request(app)
         .get('/api/auth/me')
         .set('Cookie', permMemberCookie);
       expect(res.status).toBe(200);
       expect(res.body.user.workspace.plan).toBe('free');
-      expect(res.body.user.workspace.workspacePlan).toBe('power');
     });
 
-    it('admin subscription status shows workspace plan', async () => {
+    it('admin subscription status shows power plan', async () => {
       const res = await request(app)
         .get('/api/subscription/status')
         .set('Cookie', adminCookie);
       expect(res.status).toBe(200);
-      expect(res.body.effectivePlan).toBe('power');
-      expect(res.body.isInvitedMember).toBe(false);
+      expect(res.body.plan).toBe('power');
     });
 
-    it('member subscription status shows free effective plan', async () => {
+    it('member subscription status shows free plan', async () => {
       const res = await request(app)
         .get('/api/subscription/status')
         .set('Cookie', permMemberCookie);
       expect(res.status).toBe(200);
-      expect(res.body.effectivePlan).toBe('free');
-      expect(res.body.workspacePlan).toBe('power');
-      expect(res.body.isInvitedMember).toBe(true);
-      expect(res.body.upgradeAvailable).toBe(true);
+      expect(res.body.plan).toBe('free');
     });
 
-    it('member cannot use AI conversions on paid workspace', async () => {
+    it('member cannot use AI conversions (free plan)', async () => {
       const res = await request(app)
         .post('/api/apps/convert')
         .set('Cookie', permMemberCookie)
         .attach('appFile', Buffer.from('const x = 1;'), 'app.js');
       expect(res.status).toBe(403);
       expect(res.body.error).toBe('upgrade_required');
-      expect(res.body.upgradeAvailable).toBe(true);
     });
 
-    it('admin can use AI conversions on paid workspace', async () => {
-      // Admin on power plan should pass requirePaidAI (even if no AI key configured)
+    it('admin can use AI conversions (power plan)', async () => {
       const res = await request(app)
         .post('/api/apps/convert')
         .set('Cookie', adminCookie)
         .attach('appFile', Buffer.from('const x = 1;'), 'app.js');
-      // Should not get 403 upgrade_required — may get other errors (no AI key, etc.)
       expect(res.status).not.toBe(403);
     });
 
-    it('member cannot create builder session on paid workspace', async () => {
+    it('member cannot create builder session (free plan)', async () => {
       const res = await request(app)
         .post('/api/builder/sessions')
         .set('Cookie', permMemberCookie)
         .send({ name: 'Member Build' });
       expect(res.status).toBe(403);
       expect(res.body.error).toBe('upgrade_required');
-      expect(res.body.upgradeAvailable).toBe(true);
     });
 
-    it('admin can create builder session on paid workspace', async () => {
+    it('admin can create builder session (power plan)', async () => {
       const res = await request(app)
         .post('/api/builder/sessions')
         .set('Cookie', adminCookie)
@@ -1891,11 +1881,11 @@ describe('Per-user permission model', () => {
 
   describe('Business plan displays as Creator', () => {
     beforeAll(async () => {
-      await pool.query("UPDATE workspaces SET plan = 'business' WHERE slug = 'test-workspace'");
+      await pool.query("UPDATE users SET plan = 'business' WHERE email = 'admin@test.com'");
     });
 
     afterAll(async () => {
-      await pool.query("UPDATE workspaces SET plan = 'free' WHERE slug = 'test-workspace'");
+      await pool.query("UPDATE users SET plan = 'free' WHERE email = 'admin@test.com'");
     });
 
     it('admin /me shows Creator as plan name', async () => {
@@ -1913,5 +1903,300 @@ describe('Per-user permission model', () => {
       expect(res.status).toBe(200);
       expect(res.body.planName).toBe('Creator');
     });
+  });
+});
+
+// ─── Workspace creation limits ─────────────────────────────────────────────
+
+describe('POST /api/auth/create-workspace (plan limits)', () => {
+  it('free user cannot create a second workspace', async () => {
+    // Admin is on free plan and already has 1 workspace
+    const res = await request(app)
+      .post('/api/auth/create-workspace')
+      .set('Cookie', adminCookie)
+      .send({ workspaceName: 'Second Workspace' });
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('plan_limit');
+  });
+
+  it('team user can create additional workspaces', async () => {
+    await pool.query("UPDATE users SET plan = 'team' WHERE email = 'admin@test.com'");
+
+    const res = await request(app)
+      .post('/api/auth/create-workspace')
+      .set('Cookie', adminCookie)
+      .send({ workspaceName: 'Team Second Workspace' });
+    // Team allows up to 3 workspaces
+    expect(res.status).toBe(201);
+    expect(res.body.user.workspace.name).toBe('Team Second Workspace');
+
+    // Reset plan
+    await pool.query("UPDATE users SET plan = 'free' WHERE email = 'admin@test.com'");
+  });
+});
+
+// ─── File detection (rejected types) ───────────────────────────────────────
+
+describe('POST /api/apps/check (file detection)', () => {
+  it('accepts .html files', async () => {
+    const res = await request(app)
+      .post('/api/apps/check')
+      .set('Cookie', adminCookie)
+      .send({ filename: 'app.html' });
+    expect(res.status).toBe(200);
+    expect(res.body.supported).toBe(true);
+  });
+
+  it('returns conversion prompt for .jsx files', async () => {
+    const res = await request(app)
+      .post('/api/apps/check')
+      .set('Cookie', adminCookie)
+      .send({ filename: 'component.jsx' });
+    expect(res.status).toBe(200);
+    expect(res.body.supported).toBe(false);
+    expect(res.body.conversionPrompt).toBeDefined();
+    expect(res.body.detected).toMatch(/React/);
+  });
+
+  it('rejects image files', async () => {
+    const res = await request(app)
+      .post('/api/apps/check')
+      .set('Cookie', adminCookie)
+      .send({ filename: 'photo.png' });
+    expect(res.status).toBe(200);
+    expect(res.body.supported).toBe(false);
+    expect(res.body.rejected).toBe(true);
+    expect(res.body.message).toMatch(/image/i);
+  });
+
+  it('rejects executable files', async () => {
+    const res = await request(app)
+      .post('/api/apps/check')
+      .set('Cookie', adminCookie)
+      .send({ filename: 'virus.exe' });
+    expect(res.status).toBe(200);
+    expect(res.body.rejected).toBe(true);
+  });
+});
+
+// ─── App limit enforcement across workspaces ───────────────────────────────
+
+describe('App limits are per-user across all workspaces', () => {
+  it('enforceAppLimit counts apps by email across workspaces', async () => {
+    // On free plan with 5 app limit — user already has some apps
+    const res = await request(app)
+      .get('/api/subscription/status')
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(200);
+    expect(res.body.maxApps).toBe(5);
+  });
+});
+
+// ─── Plan limits in getLimits include maxWorkspaces ─────────────────────────
+
+describe('GET /api/subscription/status (plan limits)', () => {
+  it('free plan includes maxWorkspaces = 1', async () => {
+    const res = await request(app)
+      .get('/api/subscription/status')
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(200);
+    expect(res.body.maxWorkspaces).toBe(1);
+    expect(res.body.maxApps).toBe(5);
+    expect(res.body.maxMembers).toBe(3);
+  });
+
+  it('team plan includes maxWorkspaces = 3', async () => {
+    await pool.query("UPDATE users SET plan = 'team' WHERE email = 'admin@test.com'");
+    const res = await request(app)
+      .get('/api/subscription/status')
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(200);
+    expect(res.body.maxWorkspaces).toBe(3);
+    expect(res.body.maxApps).toBe(50);
+    await pool.query("UPDATE users SET plan = 'free' WHERE email = 'admin@test.com'");
+  });
+});
+
+// ─── Workspace list & switch ───────────────────────────────────────────────
+
+describe('GET /api/auth/workspaces', () => {
+  it('rejects unauthenticated', async () => {
+    const res = await request(app).get('/api/auth/workspaces');
+    expect(res.status).toBe(401);
+  });
+
+  it('lists workspaces for authenticated user', async () => {
+    const res = await request(app)
+      .get('/api/auth/workspaces')
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.workspaces)).toBe(true);
+    expect(res.body.workspaces.length).toBeGreaterThanOrEqual(1);
+    const current = res.body.workspaces.find(w => w.isCurrent);
+    expect(current).toBeDefined();
+    expect(current.name).toBeDefined();
+    expect(current.role).toBe('admin');
+    expect(current.plan).toBeDefined();
+  });
+});
+
+describe('POST /api/auth/switch-workspace', () => {
+  it('rejects unauthenticated', async () => {
+    const res = await request(app)
+      .post('/api/auth/switch-workspace')
+      .send({ workspaceId: workspaceId });
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects missing workspaceId', async () => {
+    const res = await request(app)
+      .post('/api/auth/switch-workspace')
+      .set('Cookie', adminCookie)
+      .send({});
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects workspace user does not belong to', async () => {
+    const res = await request(app)
+      .post('/api/auth/switch-workspace')
+      .set('Cookie', adminCookie)
+      .send({ workspaceId: '00000000-0000-0000-0000-000000000000' });
+    expect(res.status).toBe(403);
+  });
+
+  it('switches to own workspace', async () => {
+    const res = await request(app)
+      .post('/api/auth/switch-workspace')
+      .set('Cookie', adminCookie)
+      .send({ workspaceId: workspaceId });
+    expect(res.status).toBe(200);
+    expect(res.body.user).toBeDefined();
+    adminCookie = res.headers['set-cookie'] || adminCookie;
+  });
+});
+
+// ─── App source download ───────────────────────────────────────────────────
+
+describe('GET /api/apps/:id/source', () => {
+  it('rejects unauthenticated', async () => {
+    const res = await request(app).get(`/api/apps/${appId}/source`);
+    expect(res.status).toBe(401);
+  });
+
+  it('downloads app source HTML', async () => {
+    const res = await request(app)
+      .get(`/api/apps/${appId}/source`)
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toMatch(/text\/html/);
+    expect(res.headers['content-disposition']).toBeDefined();
+  });
+
+  it('returns 404 for non-existent app', async () => {
+    const res = await request(app)
+      .get('/api/apps/00000000-0000-0000-0000-000000000000/source')
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(404);
+  });
+});
+
+// ─── Workspace logo ────────────────────────────────────────────────────────
+
+describe('Workspace logo endpoints', () => {
+  it('GET /api/workspace/logo returns 404 when no logo set', async () => {
+    const res = await request(app)
+      .get('/api/workspace/logo')
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(404);
+  });
+
+  it('POST /api/workspace/logo rejects unauthenticated', async () => {
+    const res = await request(app)
+      .post('/api/workspace/logo');
+    expect(res.status).toBe(401);
+  });
+
+  it('POST /api/workspace/logo rejects non-admin', async () => {
+    const res = await request(app)
+      .post('/api/workspace/logo')
+      .set('Cookie', memberCookie)
+      .attach('logo', Buffer.from('fake-image-data'), 'logo.png');
+    expect(res.status).toBe(403);
+  });
+});
+
+// ─── Subscription checkout & portal ────────────────────────────────────────
+
+describe('POST /api/subscription/checkout', () => {
+  it('rejects unauthenticated', async () => {
+    const res = await request(app)
+      .post('/api/subscription/checkout')
+      .send({ planKey: 'team' });
+    expect(res.status).toBe(401);
+  });
+
+  it('returns error when Stripe is not configured', async () => {
+    const res = await request(app)
+      .post('/api/subscription/checkout')
+      .set('Cookie', adminCookie)
+      .send({ planKey: 'team' });
+    expect(res.status).toBe(500);
+    expect(res.body.error).toMatch(/billing|configured/i);
+  });
+});
+
+describe('POST /api/subscription/portal', () => {
+  it('rejects unauthenticated', async () => {
+    const res = await request(app)
+      .post('/api/subscription/portal');
+    expect(res.status).toBe(401);
+  });
+
+  it('returns error when Stripe is not configured', async () => {
+    const res = await request(app)
+      .post('/api/subscription/portal')
+      .set('Cookie', adminCookie);
+    expect([400, 500]).toContain(res.status);
+  });
+});
+
+// ─── Builder generate ──────────────────────────────────────────────────────
+
+describe('POST /api/builder/sessions/:id/generate', () => {
+  let tempSessionId;
+
+  beforeAll(async () => {
+    await pool.query("UPDATE users SET plan = 'power' WHERE email = 'admin@test.com'");
+    const res = await request(app)
+      .post('/api/builder/sessions')
+      .set('Cookie', adminCookie)
+      .send({ name: 'Generate Test Session' });
+    tempSessionId = res.body.session?.id;
+  });
+
+  afterAll(async () => {
+    if (tempSessionId) {
+      await request(app)
+        .delete(`/api/builder/sessions/${tempSessionId}`)
+        .set('Cookie', adminCookie);
+    }
+    await pool.query("UPDATE users SET plan = 'free' WHERE email = 'admin@test.com'");
+  });
+
+  it('rejects unauthenticated', async () => {
+    const fakeId = tempSessionId || '00000000-0000-0000-0000-000000000000';
+    const res = await request(app)
+      .post(`/api/builder/sessions/${fakeId}/generate`);
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects free plan user', async () => {
+    await pool.query("UPDATE users SET plan = 'free' WHERE email = 'admin@test.com'");
+    const fakeId = tempSessionId || '00000000-0000-0000-0000-000000000000';
+    const res = await request(app)
+      .post(`/api/builder/sessions/${fakeId}/generate`)
+      .set('Cookie', adminCookie);
+    expect(res.status).toBe(403);
+    await pool.query("UPDATE users SET plan = 'power' WHERE email = 'admin@test.com'");
   });
 });
